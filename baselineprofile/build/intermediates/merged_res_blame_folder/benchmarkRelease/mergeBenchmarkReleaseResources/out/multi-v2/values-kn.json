@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.example.baseline.baselineprofile-mergeBenchmarkReleaseResources-15:/values-kn/values-kn.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\Lenovo\\.jdks\\ms-17.0.16\\caches\\8.13\\transforms\\e0833fde10a0f53ba221fa2d55597dde\\transformed\\core-1.9.0\\res\\values-kn\\values-kn.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "100",
+                        "endOffsets": "151"
+                    }
+                }
+            ]
+        }
+    ]
+}

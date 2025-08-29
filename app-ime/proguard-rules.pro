@@ -1,0 +1,3 @@
+-keep class com.example.secureime.ime.SecureKeyboardService { *; }
+-keep class androidx.compose.** { *; }
+-dontwarn kotlinx.coroutines.**

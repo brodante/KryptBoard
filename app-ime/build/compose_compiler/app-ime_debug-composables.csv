@@ -1,0 +1,6 @@
+package,name,composable,skippable,restartable,readonly,inline,isLambda,hasDefaults,defaultsGroup,groups,calls,
+com.example.secureime.ui.KeyboardRoot,KeyboardRoot,1,1,1,0,0,0,0,0,1,2,
+com.example.secureime.ui.KeyButton,KeyButton,1,1,1,0,0,0,0,0,1,4,
+com.example.secureime.ui.WideKeyButton,WideKeyButton,1,1,1,0,0,0,0,0,1,4,
+com.example.secureime.ui.FunctionKeyButton,FunctionKeyButton,1,1,1,0,0,0,0,0,1,3,
+com.example.secureime.ui.SettingsScreen,SettingsScreen,1,1,1,0,0,0,0,0,1,1,

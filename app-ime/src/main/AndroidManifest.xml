@@ -1,0 +1,26 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.secureime">
+
+    <application
+        android:allowBackup="false"
+        android:label="Secure IME"
+        android:usesCleartextTraffic="false"
+        android:supportsRtl="true">
+        <service
+            android:name=".ime.SecureKeyboardService"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="false"
+            android:label="Settings" />
+    </application>
+</manifest>

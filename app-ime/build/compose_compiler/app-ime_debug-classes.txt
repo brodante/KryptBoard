@@ -1,0 +1,6 @@
+stable class SecureKeyboardService {
+  <runtime stability> = Stable
+}
+stable class SettingsActivity {
+  <runtime stability> = Stable
+}

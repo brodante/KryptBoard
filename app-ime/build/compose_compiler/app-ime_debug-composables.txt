@@ -1,0 +1,23 @@
+restartable skippable scheme("[androidx.compose.ui.UiComposable]") fun KeyboardRoot(
+  stable onCommit: Function1<String, Unit>
+  stable onEnter: Function0<Unit>
+)
+restartable skippable scheme("[androidx.compose.ui.UiComposable]") fun KeyButton(
+  stable text: String
+  stable onClick: Function0<Unit>
+  stable modifier: Modifier? = @static Companion
+  stable enabled: Boolean = @static true
+)
+restartable skippable scheme("[androidx.compose.ui.UiComposable]") fun WideKeyButton(
+  stable text: String
+  stable onClick: Function0<Unit>
+  stable modifier: Modifier? = @static Companion
+  stable enabled: Boolean = @static true
+)
+restartable skippable scheme("[androidx.compose.ui.UiComposable]") fun FunctionKeyButton(
+  stable text: String
+  stable onClick: Function0<Unit>
+  stable modifier: Modifier? = @static Companion
+  stable enabled: Boolean = @static true
+)
+restartable skippable scheme("[androidx.compose.ui.UiComposable]") fun SettingsScreen()
