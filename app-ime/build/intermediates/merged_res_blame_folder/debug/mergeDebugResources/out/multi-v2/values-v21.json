@@ -4,7 +4,7 @@
             "outputFile": "com.example.secureime.app-ime-mergeDebugResources-44:/values-v21/values-v21.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\Lenovo\\.jdks\\ms-17.0.16\\caches\\8.13\\transforms\\a5e6d100d56dafc7dceb8a188e6d95f6\\transformed\\core-1.13.1\\res\\values-v21\\values-v21.xml",
+                    "source": "C:\\Users\\Lenovo\\.gradle\\caches\\8.13\\transforms\\a5e6d100d56dafc7dceb8a188e6d95f6\\transformed\\core-1.13.1\\res\\values-v21\\values-v21.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,13",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4",
