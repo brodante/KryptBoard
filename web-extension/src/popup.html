@@ -109,6 +109,12 @@
     <label class="check"><input type="checkbox" id="set-ignorePasswordFields" /> Never target password fields</label>
     <label class="check"><input type="checkbox" id="set-autoDetectEnvelope" /> Detect envelopes and offer Decrypt</label>
     <label class="check"><input type="checkbox" id="set-showHints" /> Show shortcut hints</label>
+    <label class="check"><input type="checkbox" id="set-captureKeys" /> Capture my keyboard while the overlay is open</label>
+    <p class="note">
+      With capture on, keystrokes — including an external keyboard's — are buffered in the extension
+      and shown in the overlay: the page never sees them. The same switch sits in the overlay's
+      toolbar as <strong>⌨ Capture</strong>. Password fields keep working normally.
+    </p>
 
     <label class="field">Key model
       <select id="set-keyModel">
@@ -195,6 +201,10 @@
   <footer class="foot">
     <button id="reset" type="button">Restore defaults</button>
     <span id="version" class="muted"></span>
+    <p class="watermark">
+      Made with love by <a href="https://github.com/brodante/" target="_blank" rel="noopener noreferrer">d4nte</a><br />
+      愛をこめて <a href="https://github.com/brodante/" target="_blank" rel="noopener noreferrer">ダンテ</a> が作りました
+    </p>
   </footer>
 
   <script type="module" src="popup.js"></script>

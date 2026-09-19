@@ -37,7 +37,11 @@ export const KB_DEFAULT_SETTINGS = Object.freeze({
   // single-session key. 'passphrase' stays the default so existing envelopes
   // and the Android IME keep interoperating.
   keyModel: 'passphrase', // 'passphrase' | 'session'
-  sessionFormat: 'json' // 'json' (Algorithm 1 output) | 'envelope'
+  sessionFormat: 'json', // 'json' (Algorithm 1 output) | 'envelope'
+  // Paper §III: keystrokes are captured in the extension's isolated context
+  // rather than handed to the page. Off by default; the overlay's ⌨ Capture
+  // toggle (and the popup checkbox) switch it on while the keyboard is open.
+  captureKeys: false
 });
 
 export const KB_SETTING_BOUNDS = Object.freeze({
@@ -65,7 +69,8 @@ const KB_BOOL_KEYS = [
   'hardenedKdf',
   'ignorePasswordFields',
   'hideOnEscape',
-  'showHints'
+  'showHints',
+  'captureKeys'
 ];
 
 /**

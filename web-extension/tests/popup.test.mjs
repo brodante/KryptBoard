@@ -368,3 +368,36 @@ test('the switch explains itself when the page cannot be reached', { skip }, asy
   await waitFor(() => /does not allow extensions/.test($('page-status').textContent));
   assert.equal($('mode-plain').classList.contains('is-active'), false, 'the UI does not claim a mode it could not set');
 });
+
+test('the capture checkbox is wired to the setting the overlay reads', { skip }, async () => {
+  const popup = await bootPopup({ tag: 'capture' });
+  const $ = (id) => popup.document.getElementById(id);
+  await waitFor(() => $('set-captureKeys') && $('page-status').textContent.length > 0);
+
+  // off by default, and described in the UI
+  assert.equal($('set-captureKeys').checked, false);
+  assert.match(popup.document.body.textContent, /Capture my keyboard/);
+
+  $('set-captureKeys').click();
+  await waitFor(() => popup.sync.get('kryptboard:settings')?.captureKeys === true);
+  assert.equal($('set-captureKeys').checked, true, 'the form keeps showing what was saved');
+
+  // ...and switching it off is stored as well
+  $('set-captureKeys').click();
+  await waitFor(() => popup.sync.get('kryptboard:settings')?.captureKeys === false);
+});
+
+test('the popup carries the footer watermark and the author links', { skip }, async () => {
+  const popup = await bootPopup({ tag: 'footer' });
+  const text = popup.document.body.textContent;
+  assert.match(text, /Made with love by/);
+  assert.match(text, /が作りました/);
+
+  const links = [...popup.document.querySelectorAll('.watermark a')];
+  assert.equal(links.length, 2);
+  for (const link of links) {
+    assert.equal(link.getAttribute('href'), 'https://github.com/brodante/');
+    assert.equal(link.getAttribute('rel'), 'noopener noreferrer');
+    assert.equal(link.getAttribute('target'), '_blank');
+  }
+});

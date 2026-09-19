@@ -84,6 +84,11 @@ Concretely, the extension gives you:
 - **An overlay keyboard** with letters/symbols layers, one-shot and locked shift, space,
   backspace and enter, dark/light/auto themes, and a live character/byte counter.
 - **Two modes**, switchable at any time, with an always-visible badge for the active one.
+- **⌨ Capture** — a toggle in the overlay's toolbar (and a checkbox in the popup) that routes
+  real keystrokes — including an external keyboard's — into the buffer instead of the page, so
+  they appear in the overlay and nowhere else. It only acts while the overlay is open, ignores
+  events a page script synthesised, never buffers password fields, and leaves browser shortcuts,
+  arrows and Tab alone.
 - **Envelope awareness**: paste an envelope into the buffer and a *Decrypt* action appears;
   a tag failure is reported instead of silently returning garbage.
 - **A popup** with connection status for the current tab, a standalone encrypt/decrypt
@@ -150,6 +155,7 @@ machine.
 | Ciphertext cannot be forged or silently altered | ChaCha20-Poly1305 tags; a tampered envelope raises an authentication error rather than returning garbage. |
 | Nothing is transmitted | The manifest requests only `storage`, declares no host permissions, and the source contains no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or `eval` — enforced by tests that read the shipped sources. The popup shows a “0 network calls” badge. |
 | Keystrokes are not replayable across contexts | The optional context label is mixed into both the KDF `info` and the AEAD associated data. |
+| Keystrokes never reach the page at all (⌨ Capture on) | The page-level listener runs in the capture phase, calls `preventDefault()` + `stopPropagation()`, and the keystroke lands in the overlay buffer — the page's own listeners never see it. Only trusted events are captured, so a page script cannot type into the buffer, and a focused password field keeps its keys. |
 
 **Residual risks the paper lists, and where we stand**
 
@@ -166,7 +172,9 @@ machine.
    plaintext is typed into the page's own document tree, inside a closed shadow root, so page
    scripts cannot read it — but the page still shares a process with the overlay, and it can
    observe that key events were delivered to the overlay's host element *if you type on your
-   physical keyboard while the buffer has focus*. Prefer clicking the on-screen keys, or use
+   physical keyboard while the buffer has focus* — the overlay stops those events at its
+   shadow-root boundary, and with **⌨ Capture** on the keystroke is intercepted before any page
+   listener runs, so the page never sees it at all. Prefer clicking the on-screen keys, or use
    the second mode, when the page is hostile.
 2. **Isolated composer** (the popup's *Try the crypto* panel). The message is typed in an
    extension page (`chrome-extension://…`), where page scripts genuinely cannot observe any
@@ -181,6 +189,11 @@ Being honest about where the guarantee stops matters more than the feature list:
 - **The overlay cannot hide the *existence* of input from the page.** Synthetic clicks and
   focus changes are observable by design — only the buffer's *contents* are hidden. Use the
   isolated composer when even that matters.
+- **Capture is opt-in and only while the overlay is open.** With ⌨ Capture off (the default)
+  the physical keyboard belongs to the page, as before; with it on, keystrokes go to the
+  buffer and the page keeps working normally once the overlay closes. IME composition is not
+  captured yet (the key events carry no text while composing), and a page that grabs focus
+  into a password field keeps its keystrokes by design.
 - **A hostile page can read what you commit.** Anything that reaches the field is the page's.
   This is the same trust boundary as the Android IME: encryption protects the channel, not
   the recipient.
@@ -266,6 +279,7 @@ lives and how faithful the implementation is.
 
 | Paper requirement | Where it lives | Status |
 |---|---|---|
+| Keystrokes are captured in the extension's own (isolated) context, not the page's | `src/keyboard.js` (`captureKey`, the **⌨ Capture** toggle) + `src/wiring.js` page listener; `src/popup.html` checkbox for the persisted setting | ✅ implemented — opt-in, trusted events only, password fields excluded, `preventDefault` + `stopPropagation` so the page sees nothing |
 | Two modes, Plain and Encrypt, toggled from a persistent browser-toolbar UI | `src/popup.html` / `popup.js` — the *Plain mode* / *Encrypt mode* switch that drives the live overlay over the message API (`kryptboard:set-mode`); mode chips inside the overlay keep it visible while typing | ✅ implemented — the switch reflects the page's current mode, changes it live, and stores it as the default for the next page |
 | Keystrokes held in an isolated buffer, encrypted as one message on demand | `src/keyboard.js` — encrypted mode buffers; `Encrypt & Send` seals | ✅ implemented |
 | **Algorithm 1** — 12-byte random nonce, `ChaCha20-Poly1305(key_bytes, nonce).encrypt_and_digest(msg)`, result `{nonce, ciphertext, tag}` base64-encoded | `kbEncryptToDict` in `src/crypto.js` | ✅ implemented byte-for-byte: standard base64 **with** padding, exactly the fields the paper names |
@@ -369,9 +383,9 @@ browser), so the honest numbers are these:
 ## Tests
 
 ```bash
-npm test                   # everything: 170 tests across eleven suites
+npm test                   # everything: 179 tests across eleven suites
 npm run test:crypto        # 44 tests: primitives, envelope + dictionary, interop vectors, fuzzing
-npm run test:dom           # 37 tests: the built bundle inside a simulated page
+npm run test:dom           # 40 tests: the built bundle inside a simulated page
 npm run bench              # measured throughput / overhead / scaling
 npm run build -- --check   # fail if bundle/content.js is stale
 ```
@@ -379,16 +393,16 @@ npm run build -- --check   # fail if bundle/content.js is stale
 | suite | tests | what it pins down |
 | --- | ---: | --- |
 | `crypto.test.mjs` | 44 | RFC 8439 / 5869 / 4231 / 7914 vectors, the golden interop envelope, Algorithm 1/2 dictionaries (shape, padding, JSON round-trip, tampering, wrong key), session keys and fingerprints, zeroization, plus fuzzing: 250 random round-trips, every single-bit corruption of nonce/ciphertext/tag rejected, 80 structural mutilations classified, no plaintext or repeated nonce in 120 envelopes |
-| `dom.test.mjs` | 37 | the *built* bundle in jsdom driven like a user (hotkey → keys → Encrypt & Send), the paper's session-key sealing (dictionary and envelope output, refusal without a key, Algorithm-2 decryption of a pasted dictionary), plus the editing primitives: maxlength, selection replacement, `beforeinput` cancellation, framework events, caret handling, clipboard copy/paste, shift lock, themes |
+| `dom.test.mjs` | 40 | the *built* bundle in jsdom driven like a user (hotkey → keys → Encrypt & Send), the paper's session-key sealing (dictionary and envelope output, refusal without a key, Algorithm-2 decryption of a pasted dictionary), physical-key **⌨ Capture** (keystrokes buffered and invisible to the page, synthetic events refused, password fields untouched), plus the editing primitives: maxlength, selection replacement, `beforeinput` cancellation, framework events, caret handling, clipboard copy/paste, shift lock, themes |
 | `settings.test.mjs` | 16 | frozen defaults, hostile input (prototype pollution, garbage types), hotkey parsing/matching, the store's load/save/reset/subscribe paths, the passphrase vault's memory-vs-remembered rules, and a change landing mid-load |
-| `wiring.test.mjs` | 13 | exact hotkey matching (near-miss combos, auto-repeat, disabled), target rules (readonly, `contenteditable`, buttons, selects), password exclusion and its opt-out, focus inside the overlay, teardown |
+| `wiring.test.mjs` | 15 | exact hotkey matching (near-miss combos, auto-repeat, disabled), target rules (readonly, `contenteditable`, buttons, selects), password exclusion and its opt-out, focus inside the overlay, the capture path (trusted events only, shortcuts/arrows/Tab left alone, settings push flips it live), teardown |
 | `content.test.mjs` | 13 | double injection, foreign/unknown messages, the popup message API (including the toolbar's mode switch), session-key hand-over and wiping, replies that wait for storage to load, and settings/passphrase pushes from other tabs |
-| `popup.test.mjs` | 13 | popup boot, the isolated composer (passphrase **and** session-key models, seal, verify, wrong passphrase, AAD, work factor), session-key generate/import/copy/forget, the toolbar Plain/Encrypt switch, settings persistence, tabs, blocked pages, clipboard fallback |
+| `popup.test.mjs` | 15 | popup boot, the isolated composer (passphrase **and** session-key models, seal, verify, wrong passphrase, AAD, work factor), session-key generate/import/copy/forget, the toolbar Plain/Encrypt switch, the capture checkbox, the footer watermark and author links, settings persistence, tabs, blocked pages, clipboard fallback |
 | `bench.test.mjs` | 3 | performance guards: a 500-character seal stays far below a frame, per-byte cost stays linear from 1 KiB to 64 KiB |
 | `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
 | `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |
-| `static.test.mjs` | 13 | packaging, permissions, no-network, markup/script cross-checks, the `[hidden]` CSS guard |
-| `demo.test.mjs` | 5 | the demo page loads the real modules and round-trips, including the paper's session-key panel: generate, fingerprint, Algorithm 1 dictionary, Algorithm 2 decryption, and the wipe on *Forget* |
+| `static.test.mjs` | 14 | packaging, permissions, no-network (author links excluded from the asset scan), markup/script cross-checks, the `[hidden]` CSS guard, the author watermark on every surface |
+| `demo.test.mjs` | 6 | the demo page loads the real modules and round-trips, including the paper's session-key panel (generate, fingerprint, Algorithm 1 dictionary, Algorithm 2 decryption, the wipe on *Forget*) and the ⌨ Capture toggle driving a physical keystroke into the buffer |
 
 What is actually verified, not merely claimed:
 
@@ -430,3 +444,9 @@ python3 -m http.server 8787        # then open http://localhost:8787/demo/demo.h
 ## License
 
 Same as the parent project: educational/demonstration purposes.
+
+---
+
+Made with love by [d4nte](https://github.com/brodante/)
+
+愛をこめて [ダンテ](https://github.com/brodante/) が作りました

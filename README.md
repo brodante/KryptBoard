@@ -5,8 +5,12 @@ A secure Android keyboard built with Kotlin, Jetpack Compose, and Material 3.
 > **Browser build:** [`web-extension/`](web-extension/) contains KryptBoard as a
 > Manifest V3 browser extension — the same buffered-keystroke design and the same
 > `v1|alg|nonce|ct|tag` envelope, so ciphertext is interchangeable between the phone and
-> the browser. See [`web-extension/README.md`](web-extension/README.md) for the threat
-> model, the crypto construction and the test suite.
+> the browser. It also implements the published paper's construction in full (a
+> locally generated single-session key, Algorithm 1's `{nonce, ciphertext, tag}` output,
+> buffer zeroization) and adds a **⌨ Capture** toggle that routes an external keyboard's
+> keystrokes into the extension's buffer so the page never sees them. See
+> [`web-extension/README.md`](web-extension/README.md) for the threat model, the crypto
+> construction and the test suite.
 
 ## Features
 
@@ -164,3 +168,9 @@ which is the reference to check the Kotlin side against.
 ## License
 
 This project is for educational/demonstration purposes.
+
+---
+
+Made with love by [d4nte](https://github.com/brodante/)
+
+愛をこめて [ダンテ](https://github.com/brodante/) が作りました

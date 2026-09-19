@@ -162,3 +162,19 @@ pre#format-sample {
   overflow-x: auto;
   color: var(--crypto);
 }
+
+.demo-foot {
+  margin: 8px auto 32px;
+  max-width: 980px;
+  padding: 0 20px;
+  color: var(--dim, #98a2c2);
+  font-size: 11.5px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.demo-foot a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

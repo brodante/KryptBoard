@@ -379,6 +379,21 @@
   background: var(--kb-key-hover);
 }
 
+/* the ⌨ Capture toggle while it is routing keystrokes into the buffer */
+.kb-capture {
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-capture.is-active {
+  background: var(--kb-accent);
+  border-color: color-mix(in srgb, var(--kb-accent) 70%, #000);
+  color: #fff;
+}
+
+.kb-capture.is-active:hover {
+  background: color-mix(in srgb, var(--kb-accent) 86%, #000);
+}
+
 .kb-ghost:focus-visible,
 .kb-act:focus-visible,
 .kb-key:focus-visible,

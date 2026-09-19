@@ -105,7 +105,11 @@ test('no eval, no new Function, no runtime code generation', async () => {
 test('the overlay has no external dependencies and no remote assets', async () => {
   for (const file of ['src/keyboard.js', 'src/keyboard.css', 'src/popup.html']) {
     const code = await read(file);
-    assert.equal(/https?:\/\//.test(code), false, `${file} references a remote URL`);
+    // Author links in the footer are navigational (<a href>), not assets: they
+    // are stripped before the check, so a stray <img>/<script>/@import is still
+    // caught.
+    const withoutAnchors = code.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, '');
+    assert.equal(/https?:\/\//.test(withoutAnchors), false, `${file} references a remote URL`);
     assert.equal(/@import|url\(\s*['"]?http/i.test(code), false, `${file} loads a remote asset`);
   }
   const pkg = JSON.parse(await read('package.json'));
@@ -182,5 +186,21 @@ test('the README documents the threat model and the honest limits', async () => 
   const readme = await read('README.md');
   for (const phrase of ['Threat model', 'Limitations', 'KryptBoard']) {
     assert.match(readme, new RegExp(phrase, 'i'), `README should discuss ${phrase}`);
+  }
+});
+
+test('every surface carries the author watermark', async () => {
+  const surfaces = ['src/popup.html', '../README.md', 'README.md'];
+  for (const file of surfaces) {
+    const text = await read(file);
+    assert.match(text, /Made with love by/, `${file} is missing the watermark`);
+    assert.match(text, /愛をこめて/, `${file} is missing the Japanese watermark line`);
+    assert.match(text, /https:\/\/github\.com\/brodante\//, `${file} is missing the author link`);
+  }
+  // the demo page and the preview landing page carry it too
+  for (const file of ['demo/demo.html', 'index.html']) {
+    const text = await read(file);
+    assert.match(text, /が作りました/, `${file} is missing the watermark`);
+    assert.match(text, /href="https:\/\/github\.com\/brodante\/"/, `${file} is missing the author link`);
   }
 });

@@ -60,6 +60,9 @@ export function kbWireKeyboard(options) {
     savePassphrase: adapter.savePassphrase,
     getSessionKey: adapter.getSessionKey,
     getSessionKeyFingerprint: adapter.getSessionKeyFingerprint,
+    onCaptureChange: (on) => {
+      if (adapter.saveSettings) Promise.resolve(adapter.saveSettings({ captureKeys: on })).catch(() => {});
+    },
     onThemeChange: (theme) => {
       if (adapter.saveSettings) Promise.resolve(adapter.saveSettings({ theme })).catch(() => {});
     },
@@ -109,15 +112,33 @@ export function kbWireKeyboard(options) {
     const settings = getSettings();
     if (settings.enabled === false) return;
     const combo = kbParseHotkey(settings.hotkey);
-    if (!kbHotkeyMatches(combo, event)) return;
-    if (event.repeat) {
+    if (kbHotkeyMatches(combo, event)) {
+      if (event.repeat) {
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      toggle();
       return;
     }
+
+    // Physical-key capture (paper §III): while the ⌨ toggle is on and the
+    // overlay is open, a real keystroke belongs to the buffer, not the page.
+    //   • synthetic events are ignored, so a page script cannot type plaintext
+    //     into the buffer on the user's behalf (isTrusted === false);
+    //   • keystrokes raised inside the overlay are already ours;
+    //   • the password-field rule lives in the component.
+    if (!keyboard.isOpen() || !keyboard.isCapturingKeys()) return;
+    if (event.isTrusted === false) return;
+    if (isOurs(event.target)) return;
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    if (path.includes(keyboard.host)) return;
+    if (!keyboard.captureKey(event)) return;
     event.preventDefault();
     event.stopPropagation();
     if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
-    toggle();
   }
 
   function open(target) {

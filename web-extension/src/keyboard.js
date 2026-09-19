@@ -353,6 +353,8 @@ const KB_HTML = `
     <span class="kb-brand"><span class="kb-dot" aria-hidden="true"></span>KryptBoard</span>
     <span class="kb-target" title="Where committed text goes"></span>
     <span class="kb-bar-actions">
+      <button type="button" class="kb-ghost kb-capture" data-act="capture" data-role="capture"
+        aria-pressed="false" title="Send every keystroke into the buffer — the page never sees them">⌨ Capture</button>
       <button type="button" class="kb-ghost kb-theme-btn" data-act="theme" title="Switch theme">◐</button>
       <button type="button" class="kb-ghost" data-act="hide" title="Hide the keyboard (Esc)">Hide ⎋</button>
     </span>
@@ -411,6 +413,7 @@ const KB_HTML = `
  * @param {(p: string, remember: boolean) => Promise<void>} [options.savePassphrase]
  * @param {() => Uint8Array|null} [options.getSessionKey] paper §III single-session key
  * @param {() => string} [options.getSessionKeyFingerprint]
+ * @param {(on: boolean) => void} [options.onCaptureChange] the ⌨ Capture toggle moved
  * @param {(text: string, meta: object) => void} [options.onCommit] committed to the page
  * @param {(state: object) => void} [options.onStateChange]
  * @param {() => void} [options.onClose]
@@ -462,6 +465,7 @@ export function kbCreateKeyboard(options = {}) {
     pass: shadow.querySelector('[data-role="pass"]'),
     remember: shadow.querySelector('[data-role="remember"]'),
     themeBtn: shadow.querySelector('.kb-theme-btn'),
+    capture: shadow.querySelector('[data-role="capture"]'),
     hint: shadow.querySelector('[data-role="hint"]')
   };
 
@@ -478,7 +482,8 @@ export function kbCreateKeyboard(options = {}) {
     busy: false,
     passLoaded: false,
     lastEnvelope: '',
-    theme: 'dark'
+    theme: 'dark',
+    capture: false
   };
 
   /* -------------------------- rendering -------------------------- */
@@ -571,10 +576,90 @@ export function kbCreateKeyboard(options = {}) {
   function renderAll() {
     renderKeys();
     renderMode();
+    renderCapture();
     renderStatus();
     renderHints();
     renderTarget();
     renderPassphrase();
+  }
+
+  /** The ⌨ Capture toggle (paper §III: keystrokes live in the isolated context). */
+  function renderCapture() {
+    if (!refs.capture) return;
+    const on = state.capture === true;
+    refs.capture.classList.toggle('is-active', on);
+    refs.capture.setAttribute('aria-pressed', String(on));
+    refs.capture.textContent = on ? '⌨ Capturing' : '⌨ Capture';
+    refs.capture.title = on
+      ? 'Capturing the keyboard: keystrokes land in the buffer and the page never sees them'
+      : 'Send every keystroke into the buffer — for an external keyboard, while the overlay is open';
+  }
+
+  /**
+   * Turns physical-key capture on or off.
+   *
+   * @param {boolean} on
+   * @param {{persist?: boolean}} [opts] `persist: false` applies the setting
+   *        without writing it back (used when the value came from settings).
+   */
+  function setCaptureKeys(on, opts = {}) {
+    state.capture = on === true;
+    renderCapture();
+    if (opts.persist !== false && typeof options.onCaptureChange === 'function') {
+      try {
+        options.onCaptureChange(state.capture);
+      } catch (error) {
+        /* a settings write must never break the overlay */
+      }
+    }
+    return state.capture;
+  }
+
+  const isCapturingKeys = () => state.capture === true;
+
+  /** The page element that currently has focus, piercing open shadow roots. */
+  function activePageElement() {
+    let element = doc.activeElement;
+    let guard = 0;
+    while (element && element.shadowRoot && element.shadowRoot.activeElement && guard++ < 10) {
+      element = element.shadowRoot.activeElement;
+    }
+    return element;
+  }
+
+  /**
+   * Routes one real keystroke into the buffer instead of the page.
+   *
+   * Called by the wiring layer, which owns the page-level listener and is
+   * responsible for preventDefault()/stopPropagation() when this returns true.
+   * Modifier-only keys, arrows, function keys and browser shortcuts are left
+   * alone, and nothing is captured while a password field has focus.
+   *
+   * @returns {boolean} true when the keystroke was consumed.
+   */
+  function captureKey(event) {
+    if (!event || typeof event.key !== 'string') return false;
+    if (event.isComposing || event.key === 'Process' || event.key === 'Unidentified') return false;
+    if (event.ctrlKey || event.metaKey || event.altKey) return false; // browser and page shortcuts stay theirs
+    // Credentials are never buffered: a focused password field keeps working.
+    if (settings().ignorePasswordFields !== false && kbIsPasswordField(activePageElement())) return false;
+    if (event.key === 'Escape') {
+      if (settings().hideOnEscape === false) return false;
+      close('esc');
+      return true;
+    }
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      handleBackspace();
+      return true;
+    }
+    if (event.key === 'Enter') {
+      if (state.mode === 'encrypted') insertIntoBuffer('\n');
+      else handleEnter();
+      return true;
+    }
+    if (event.key.length !== 1) return false; // Shift, arrows, Tab, F-keys, Esc handled above
+    handleChar(event.key);
+    return true;
   }
 
   function updateCount() {
@@ -1111,6 +1196,18 @@ export function kbCreateKeyboard(options = {}) {
       case 'mode':
         applyMode(value);
         break;
+      case 'capture': {
+        const on = setCaptureKeys(!isCapturingKeys());
+        setStatus(
+          on
+            ? state.mode === 'encrypted'
+              ? 'Capturing the keyboard — keystrokes land in the buffer; the page sees none.'
+              : 'Capturing the keyboard — plain mode commits each key straight to the field.'
+            : 'Capture off — keystrokes go to the page again.',
+          'info'
+        );
+        break;
+      }
       case 'send':
         handleSend();
         break;
@@ -1322,6 +1419,8 @@ export function kbCreateKeyboard(options = {}) {
   function refreshSettings() {
     const config = settings();
     setTheme(config.theme || 'dark');
+    // the persisted value wins; the overlay's toggle writes it back
+    state.capture = config.captureKeys === true;
     if (config.startMode === 'plain' || config.startMode === 'encrypted') {
       // applies to the next open; an open keyboard keeps the user's choice
     }
@@ -1352,6 +1451,9 @@ export function kbCreateKeyboard(options = {}) {
     getTarget: () => state.target,
     setMode: (mode) => applyMode(mode),
     getMode: () => state.mode,
+    setCaptureKeys,
+    isCapturingKeys,
+    captureKey,
     getBuffer: () => state.buffer,
     setBuffer,
     clearBuffer: () => setBuffer(''),

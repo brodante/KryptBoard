@@ -45,6 +45,7 @@ const SETTING_FIELDS = [
   ['set-ignorePasswordFields', 'ignorePasswordFields', 'checked'],
   ['set-autoDetectEnvelope', 'autoDetectEnvelope', 'checked'],
   ['set-showHints', 'showHints', 'checked'],
+  ['set-captureKeys', 'captureKeys', 'checked'],
   ['set-hardenedKdf', 'hardenedKdf', 'checked'],
   ['set-pbkdf2Iterations', 'pbkdf2Iterations', 'value'],
   ['set-aad', 'aad', 'value'],

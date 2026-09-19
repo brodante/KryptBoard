@@ -62,16 +62,19 @@ const flatten = (value) => JSON.stringify(value ?? '');
 test('defaults are frozen and cover exactly the documented settings', () => {
   assert.equal(Object.isFrozen(KB_DEFAULT_SETTINGS), true);
   assert.deepEqual(Object.keys(KB_DEFAULT_SETTINGS).sort(), [
-    'aad', 'autoDetectEnvelope', 'clearBufferOnClose', 'closeAfterSend', 'commitStyle',
-    'enabled', 'hardenedKdf', 'hideOnEscape', 'hotkey', 'ignorePasswordFields',
-    'keepOpenAfterCopy', 'keyModel', 'pbkdf2Iterations', 'sessionFormat', 'showHints',
-    'startMode', 'theme'
+    'aad', 'autoDetectEnvelope', 'captureKeys', 'clearBufferOnClose', 'closeAfterSend',
+    'commitStyle', 'enabled', 'hardenedKdf', 'hideOnEscape', 'hotkey',
+    'ignorePasswordFields', 'keepOpenAfterCopy', 'keyModel', 'pbkdf2Iterations',
+    'sessionFormat', 'showHints', 'startMode', 'theme'
   ]);
   // the security-relevant defaults must not silently flip
   assert.equal(KB_DEFAULT_SETTINGS.ignorePasswordFields, true);
   assert.equal(KB_DEFAULT_SETTINGS.autoDetectEnvelope, true);
   assert.equal(KB_DEFAULT_SETTINGS.hardenedKdf, false);
   assert.equal(KB_DEFAULT_SETTINGS.startMode, 'encrypted');
+  // capturing the physical keyboard is opt-in: keystrokes belong to the page
+  // until the user says otherwise
+  assert.equal(KB_DEFAULT_SETTINGS.captureKeys, false);
 });
 
 test('normalisation drops unknown keys and rejects values it cannot trust', () => {

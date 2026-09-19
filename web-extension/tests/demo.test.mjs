@@ -23,10 +23,23 @@ try {
 
 const skip = JSDOM ? false : 'jsdom is not installed (run: npm install)';
 
+const { canSimulateTrustedEvent, physicalKey } = await import('./support/trusted.mjs');
+const skipTrustDemo = skip || (canSimulateTrustedEvent() ? false : 'this jsdom build cannot simulate a trusted event');
+
 async function bootDemo() {
   const html = await fs.readFile(path.join(ROOT, 'demo/demo.html'), 'utf8');
   const dom = new JSDOM(html, { url: 'http://localhost:8787/demo/demo.html', runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
+
+  // the demo overlay also uses a closed shadow root, so record roots as they
+  // are created (the same trick the dom suite uses)
+  const shadowRoots = [];
+  const originalAttachShadow = window.Element.prototype.attachShadow;
+  window.Element.prototype.attachShadow = function (init) {
+    const root = originalAttachShadow.call(this, init);
+    shadowRoots.push({ host: this, root, mode: init && init.mode });
+    return root;
+  };
 
   // localStorage is available in jsdom already; the demo uses it for settings.
   const previous = {
@@ -63,6 +76,7 @@ async function bootDemo() {
   return {
     window,
     document: window.document,
+    shadowRoots,
     waitFor,
     restore() {
       for (const [key, value] of Object.entries(previous)) {
@@ -217,6 +231,37 @@ test('the demo envelope stays decryptable with the passphrase model after switch
     $('gen-sample').click();
     assert.ok(await demo.waitFor(() => $('format-sample').textContent.startsWith('v1|CHACHA20-POLY1305|')));
     assert.match($('format-sample').textContent, /kdf {12}: HKDF-SHA256/);
+  } finally {
+    demo.restore();
+  }
+});
+
+test('the demo overlay can capture the physical keyboard', { skip: skipTrustDemo }, async () => {
+  const demo = await bootDemo();
+  try {
+    await demo.waitFor(() => /demo ready/.test(demo.document.getElementById('log').textContent));
+    const $ = (id) => demo.document.getElementById(id);
+    $('open-kb').click();
+    assert.ok(await demo.waitFor(() => demo.document.querySelector('[data-kryptboard="root"]')));
+
+    // the toggle is in the overlay's toolbar and persists through the demo adapter
+    const host = demo.document.querySelector('[data-kryptboard="root"]');
+    const capture = demo.shadowRoots[0].root.querySelector('[data-act="capture"]');
+    capture.click();
+    assert.equal(capture.classList.contains('is-active'), true);
+    assert.ok(await demo.waitFor(() => JSON.parse(localStorage.getItem('kryptboard.demo.settings')).captureKeys === true));
+    assert.equal(host, demo.shadowRoots[0].host);
+
+    // a physical keystroke lands in the buffer and never reaches the page field
+    const buffer = demo.shadowRoots[0].root.querySelector('[data-role="buffer"]');
+    const field = $('msg');
+    field.focus();
+    const event = physicalKey(demo.window, 'd');
+    field.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, true, 'the page default action is suppressed');
+    assert.equal(buffer.value, 'd', 'the buffer shows the captured key');
+    assert.equal(field.value, '', 'the demo field received nothing');
+    assert.match($('log').textContent, /keyboard opened by button/, 'the page log stayed quiet about the keystroke');
   } finally {
     demo.restore();
   }

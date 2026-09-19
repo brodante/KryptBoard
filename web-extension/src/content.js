@@ -68,7 +68,8 @@ import { kbWireKeyboard } from './wiring.js';
       keyModel: store.get().keyModel,
       sessionFormat: store.get().sessionFormat,
       hotkey: store.get().hotkey,
-      enabled: store.get().enabled
+      enabled: store.get().enabled,
+      capturingKeys: wired.keyboard.isCapturingKeys()
     };
   }
 
@@ -105,7 +106,7 @@ import { kbWireKeyboard } from './wiring.js';
             const mode = message.mode === 'plain' ? 'plain' : 'encrypted';
             wired.keyboard.setMode(mode);
             await store.save({ startMode: mode });
-            sendResponse({ ok: true, mode });
+            sendResponse({ ok: true, mode, capturingKeys: wired.keyboard.isCapturingKeys() });
             break;
           }
           case 'kryptboard:clear-passphrase':

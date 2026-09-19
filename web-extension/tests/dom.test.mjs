@@ -20,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { bundleSources, readBundleHash } from '../scripts/bundler.mjs';
+import { physicalKey, canSimulateTrustedEvent } from './support/trusted.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -1004,4 +1005,116 @@ test('a tampered dictionary is never silently accepted in the overlay', { skip }
   harness.clickKey('[data-act="decrypt"]');
   await harness.waitFor(() => /Tag verification failed/.test(harness.shadowQuery('[data-role="status"]').textContent));
   assert.equal(harness.shadowQuery('[data-role="buffer"]').value.includes('untouched'), false);
+});
+
+/* ------------------------------------------------------------------ */
+/* physical-key capture (the ⌨ Capture toggle, paper §III)              */
+/* ------------------------------------------------------------------ */
+
+
+const skipTrust = skip || (canSimulateTrustedEvent() ? false : 'this jsdom build cannot simulate a trusted event');
+
+test('the ⌨ Capture toggle sends physical keystrokes to the buffer, never to the page', { skip: skipTrust }, async () => {
+  const harness = await createHarness();
+  const { document, window, shadowQuery } = harness;
+
+  harness.pressHotkey();
+  await harness.waitFor(() => harness.isVisible());
+
+  const field = harness.focusField('msg');
+  const capture = shadowQuery('[data-act="capture"]');
+  assert.equal(capture.getAttribute('aria-pressed'), 'false', 'capture starts off');
+
+  // With capture off, a keystroke is the page's business.
+  const leaked = [];
+  document.getElementById('msg').addEventListener('keydown', (event) => leaked.push(event.key));
+  const before = physicalKey(window, 'x');
+  field.dispatchEvent(before);
+  assert.deepEqual(leaked, ['x'], 'without capture the page sees the keystroke');
+  assert.equal(before.defaultPrevented, false);
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, '');
+
+  // Turn it on: the button latches, the status explains itself, and the
+  // choice is written to settings so it survives the next page.
+  capture.click();
+  assert.equal(capture.classList.contains('is-active'), true);
+  assert.equal(capture.getAttribute('aria-pressed'), 'true');
+  assert.match(shadowQuery('[data-role="status"]').textContent, /Capturing the keyboard/);
+  assert.equal(harness.chromeStub.sync.get('kryptboard:settings').captureKeys, true);
+
+  leaked.length = 0;
+  for (const key of ['h', 'i']) field.dispatchEvent(physicalKey(window, key));
+  field.dispatchEvent(physicalKey(window, ' '));
+  assert.equal(shadowQuery('[data-role="buffer"]').value, 'hi ', 'the buffer shows what was typed');
+  assert.equal(field.value, '', 'the page field never received the keystrokes');
+  assert.deepEqual(leaked, [], 'page listeners never see a captured keystroke');
+
+  // backspace and enter edit the buffer instead of the page
+  field.dispatchEvent(physicalKey(window, 'Backspace'));
+  assert.equal(shadowQuery('[data-role="buffer"]').value, 'hi');
+  field.dispatchEvent(physicalKey(window, 'Enter'));
+  assert.equal(shadowQuery('[data-role="buffer"]').value, 'hi\n');
+
+  // a page script cannot type into the buffer on the user's behalf
+  const synthetic = new window.KeyboardEvent('keydown', { key: 'z', bubbles: true, cancelable: true });
+  field.dispatchEvent(synthetic);
+  assert.equal(shadowQuery('[data-role="buffer"]').value, 'hi\n', 'untrusted events are ignored');
+
+  // nor can modifiers, arrows or Tab be swallowed
+  for (const overrides of [{ key: 'Shift' }, { key: 'ArrowLeft' }, { key: 'Tab' }, { key: 'a', ctrlKey: true }]) {
+    const event = physicalKey(window, overrides.key, overrides);
+    field.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, false, `${overrides.key} is left to the browser or page`);
+  }
+  assert.equal(shadowQuery('[data-role="buffer"]').value, 'hi\n');
+
+  // Escape still closes the overlay — and closing wipes what was captured
+  field.dispatchEvent(physicalKey(window, 'Escape'));
+  await harness.waitFor(() => !harness.isVisible());
+  assert.equal(shadowQuery('[data-role="buffer"]').value, '', 'closing the overlay wipes the captured buffer');
+
+  // ...and turning it off hands the keyboard back to the page
+  harness.pressHotkey();
+  await harness.waitFor(() => harness.isVisible());
+  const captureAgain = harness.shadowQuery('[data-act="capture"]');
+  assert.equal(captureAgain.classList.contains('is-active'), true, 'the toggle remembers it is on');
+  captureAgain.click();
+  assert.equal(captureAgain.classList.contains('is-active'), false);
+  assert.match(harness.shadowQuery('[data-role="status"]').textContent, /Capture off/);
+
+  leaked.length = 0;
+  const after = physicalKey(window, 'q');
+  harness.document.getElementById('msg').dispatchEvent(after);
+  assert.deepEqual(leaked, ['q'], 'with capture off the page gets its keystrokes back');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, '', 'and nothing is buffered any more');
+});
+
+test('capture never swallows a password field, and cannot be captured into it', { skip: skipTrust }, async () => {
+  const harness = await createHarness();
+  harness.pressHotkey();
+  await harness.waitFor(() => harness.isVisible());
+  harness.shadowQuery('[data-act="capture"]').click();
+
+  const pw = harness.focusField('pw');
+  const event = physicalKey(harness.window, 'p');
+  pw.dispatchEvent(event);
+
+  assert.equal(event.defaultPrevented, false, 'the password field keeps working');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, '', 'nothing is buffered from a password field');
+});
+
+test('the capture toggle is reachable from the popup message API', { skip }, async () => {
+  const harness = await createHarness();
+  harness.pressHotkey();
+  await harness.waitFor(() => harness.isVisible());
+  assert.equal((await harness.sendMessage({ type: 'kryptboard:ping' })).capturingKeys, false);
+
+  harness.shadowQuery('[data-act="capture"]').click();
+  const ping = await harness.sendMessage({ type: 'kryptboard:ping' });
+  assert.equal(ping.capturingKeys, true, 'the popup can show whether the keyboard is being captured');
+
+  // a settings push (the popup checkbox) also drives the live overlay
+  harness.chromeStub.stub.storage.sync.set({ 'kryptboard:settings': { captureKeys: false } });
+  await harness.waitFor(() => harness.shadowQuery('[data-act="capture"]').getAttribute('aria-pressed') === 'false');
+  assert.equal((await harness.sendMessage({ type: 'kryptboard:ping' })).capturingKeys, false);
 });

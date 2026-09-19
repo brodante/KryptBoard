@@ -290,3 +290,90 @@ test('kbDeepActiveElement pierces open shadow roots', { skip: skipAll }, async (
 test('wiring without a document fails loudly instead of half-installing', { skip: skipAll }, async () => {
   assert.throws(() => kbWireKeyboard({ doc: null, window: null, adapter: {} }), /needs a document and window/);
 });
+
+/* ------------------------------------------------------------------ */
+/* physical-key capture (the ⌨ Capture toggle, paper §III)              */
+/* ------------------------------------------------------------------ */
+
+const { physicalKey, canSimulateTrustedEvent } = await import('./support/trusted.mjs');
+const skipTrust = skipAll || (canSimulateTrustedEvent() ? false : 'this jsdom build cannot simulate a trusted event');
+
+test('capture routes page keystrokes into the overlay buffer and stops them there', { skip: skipTrust }, async () => {
+  const h = createWiring();
+  const field = h.focus('area');
+  h.wired.open();
+  assert.equal(h.isOpen(), true);
+
+  const leaked = [];
+  h.window.document.body.addEventListener('keydown', (event) => leaked.push(event.key));
+
+  // capture off: the page gets its keystroke
+  const idle = physicalKey(h.window, 'x');
+  field.dispatchEvent(idle);
+  assert.deepEqual(leaked, ['x']);
+  assert.equal(h.wired.keyboard.getBuffer(), '');
+
+  // the toggle persists through the adapter
+  h.wired.keyboard.setCaptureKeys(true);
+  assert.ok(h.saved.some((patch) => patch.captureKeys === true), 'the switch is written to settings');
+  assert.equal(h.wired.keyboard.isCapturingKeys(), true);
+
+  leaked.length = 0;
+  const captured = physicalKey(h.window, 'a');
+  field.dispatchEvent(captured);
+  assert.equal(captured.defaultPrevented, true, 'the page default action is suppressed');
+  assert.deepEqual(leaked, [], 'no page listener sees the keystroke');
+  assert.equal(h.wired.keyboard.getBuffer(), 'a', 'the key lands in the buffer');
+  assert.equal(field.value, '', 'and not in the field');
+
+  // untrusted events are refused: a page script cannot type into the buffer
+  const synthetic = new h.window.KeyboardEvent('keydown', { key: 'z', bubbles: true, cancelable: true });
+  field.dispatchEvent(synthetic);
+  assert.equal(h.wired.keyboard.getBuffer(), 'a');
+  assert.equal(synthetic.defaultPrevented, false);
+
+  // the hotkey keeps working while capturing
+  const hotkey = h.press();
+  assert.equal(hotkey.defaultPrevented, true);
+  assert.equal(h.isOpen(), false);
+
+  // and capture follows the settings when the popup changes them
+  h.wired.open();
+  h.pushSettings({ captureKeys: false });
+  assert.equal(h.wired.keyboard.isCapturingKeys(), false);
+  const afterPush = physicalKey(h.window, 'b');
+  field.dispatchEvent(afterPush);
+  assert.equal(afterPush.defaultPrevented, false);
+  assert.equal(h.wired.keyboard.getBuffer(), '');
+});
+
+test('capture leaves browser and page shortcuts, arrows and typing in the overlay alone', { skip: skipTrust }, async () => {
+  const h = createWiring();
+  const field = h.focus('area');
+  h.wired.open();
+  h.wired.keyboard.setCaptureKeys(true);
+
+  const untouched = [
+    { key: 'a', ctrlKey: true },   // Ctrl+A belongs to the page
+    { key: 'c', metaKey: true },   // and so does Cmd/Windows+C
+    { key: 'F5' },                 // function keys
+    { key: 'ArrowLeft' },          // arrows
+    { key: 'Tab' },                // focus movement
+    { key: 'Shift' },              // modifier alone
+    { key: 'Process', isComposing: true } // IME composition
+  ];
+  for (const overrides of untouched) {
+    const event = physicalKey(h.window, overrides.key, overrides);
+    field.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, false, `${overrides.key} must not be swallowed`);
+  }
+  assert.equal(h.wired.keyboard.getBuffer(), '', 'none of those reached the buffer');
+
+  // typing in the overlay itself is unaffected (it is already in our context)
+  const buffer = h.wired.keyboard.refs.buffer;
+  field.blur();
+  buffer.focus();
+  const inside = physicalKey(h.window, 'q');
+  buffer.dispatchEvent(inside);
+  assert.equal(h.wired.keyboard.getBuffer(), '', 'the overlay handles its own keystrokes');
+});
