@@ -69,6 +69,12 @@ const KB_ERR = {
 export const KB_ENVELOPE_VERSION = 1;
 export const KB_ALGORITHM = 'CHACHA20-POLY1305';
 export const KB_ALGORITHM_HARDENED = 'CHACHA20-POLY1305+PBKDF2';
+// Paper §III (Algorithm 1): the proof-of-concept's single-session key model
+// encrypts with a raw 32-byte key held in the extension's storage, with no
+// passphrase and therefore no KDF.
+export const KB_ALGORITHM_SESSION = 'CHACHA20-POLY1305+SESSIONKEY';
+export const KB_SESSION_KEY_BYTES = 32;
+export const KB_SESSION_KEY_PREFIX = 'kbk1.';
 export const KB_NONCE_BYTES = 12;
 export const KB_TAG_BYTES = 16;
 export const KB_KEY_BYTES = 32;
@@ -194,6 +200,163 @@ export function kbB64UrlDecode(str, what = 'base64url value') {
     }
   }
   return at === outLen ? out : out.subarray(0, at);
+}
+
+/* ------------------------------------------------------------------ */
+/* Standard base64 (Algorithm 1's wire encoding) and memory hygiene     */
+/* ------------------------------------------------------------------ */
+
+const KB_B64_STD = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+/**
+ * Algorithm 1 returns `base64.b64encode(...)` output, i.e. the standard
+ * alphabet *with* padding. Envelopes keep using the unpadded URL-safe
+ * alphabet; the dictionary form matches the paper byte for byte.
+ */
+export function kbB64Encode(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let out = '';
+  for (let i = 0; i < b.length; i += 3) {
+    const b0 = b[i];
+    const b1 = i + 1 < b.length ? b[i + 1] : undefined;
+    const b2 = i + 2 < b.length ? b[i + 2] : undefined;
+    out += KB_B64_STD[b0 >> 2];
+    out += KB_B64_STD[((b0 & 0x03) << 4) | ((b1 ?? 0) >> 4)];
+    out += b1 === undefined ? '=' : KB_B64_STD[((b1 & 0x0f) << 2) | ((b2 ?? 0) >> 6)];
+    out += b2 === undefined ? '=' : KB_B64_STD[b2 & 0x3f];
+  }
+  return out;
+}
+
+/** Lenient reader: accepts padded or unpadded, standard or URL-safe alphabet. */
+export function kbB64Decode(str, what = 'base64 value') {
+  const s = String(str).trim().replace(/=+$/, '');
+  if (/=[^=]/.test(s)) throw new KBError(KB_ERR.BAD_ENVELOPE, `Invalid padding in ${what}.`);
+  return kbB64UrlDecode(s, what);
+}
+
+/**
+ * Best-effort zeroization (paper §III, "immediate zeroization").
+ *
+ * JavaScript strings are immutable, so a plaintext string that has already
+ * been handed to the engine cannot be rewritten. Every *byte buffer* we own,
+ * however, is overwritten with zeros the moment it stops being needed — the
+ * UTF-8 plaintext, the derived or supplied key, and any caller-provided
+ * scratch buffer. Callers can pass `options.scratch` to keep the plaintext in
+ * memory they control and have it wiped for them.
+ */
+export function kbZeroizeBytes(view) {
+  if (!view) return false;
+  if (view instanceof Uint8Array) {
+    view.fill(0);
+    return true;
+  }
+  if (ArrayBuffer.isView(view)) {
+    new Uint8Array(view.buffer, view.byteOffset, view.byteLength).fill(0);
+    return true;
+  }
+  if (view instanceof ArrayBuffer) {
+    new Uint8Array(view).fill(0);
+    return true;
+  }
+  return false;
+}
+
+/* ------------------------------------------------------------------ */
+/* Single-session keys (paper: "the encryption key is generated and     */
+/* managed locally within the extension's secure storage")              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Runs `fn(plaintextBytes, plaintextLength)` with the UTF-8 bytes of the
+ * message, then zeroizes them — whether they live in our own buffer or in the
+ * caller's `options.scratch`. Every encryption path goes through here, so the
+ * "buffer is wiped the moment it is no longer needed" rule (paper §III) holds
+ * in one place instead of five.
+ */
+function kbWithPlaintextBytes(plaintext, options, fn) {
+  const encoded = kbUtf8(plaintext);
+  let owned = encoded;
+  try {
+    if (encoded.length > KB_MAX_PAYLOAD_BYTES) {
+      throw new KBError(KB_ERR.BAD_ENVELOPE, 'Message exceeds the 1 MiB safety limit.');
+    }
+    let body = encoded;
+    if (options.scratch && options.scratch.length >= encoded.length) {
+      options.scratch.set(encoded, 0);
+      kbZeroizeBytes(encoded);
+      owned = null;
+      body = options.scratch.subarray(0, encoded.length);
+    }
+    return fn(body, encoded.length);
+  } finally {
+    kbZeroizeBytes(owned);
+    if (options.scratch) kbZeroizeBytes(options.scratch);
+  }
+}
+
+export function kbGenerateSessionKey() {
+  return kbRandomBytes(KB_SESSION_KEY_BYTES);
+}
+
+/** Accepts raw bytes, a `kbk1.` sharing string, or base64/base64url text. */
+export function kbNormalizeKeyBytes(key, what = 'key') {
+  let bytes;
+  if (key instanceof Uint8Array) {
+    bytes = key.slice();
+  } else if (key && typeof key === 'object' && typeof key.byteLength === 'number') {
+    bytes = new Uint8Array(key).slice();
+  } else if (typeof key === 'string') {
+    const text = key.trim();
+    if (!text) throw new KBError(KB_ERR.NO_PASSPHRASE, `A ${what} is required.`);
+    bytes = kbB64Decode(text.startsWith(KB_SESSION_KEY_PREFIX) ? text.slice(KB_SESSION_KEY_PREFIX.length) : text, what);
+  } else {
+    throw new KBError(KB_ERR.NO_PASSPHRASE, `A ${what} is required.`);
+  }
+  if (bytes.length !== KB_SESSION_KEY_BYTES) {
+    kbZeroizeBytes(bytes);
+    throw new KBError(KB_ERR.BAD_ENVELOPE, `A ${what} must be ${KB_SESSION_KEY_BYTES} bytes (got ${bytes.length}).`);
+  }
+  return bytes;
+}
+
+/** Text a recipient can paste into their own KryptBoard to read your messages. */
+export function kbEncodeSessionKey(key) {
+  return KB_SESSION_KEY_PREFIX + kbB64UrlEncode(kbNormalizeKeyBytes(key));
+}
+
+/** The inverse of kbEncodeSessionKey (accepts the `kbk1.` prefix, or bare base64). */
+export function kbDecodeSessionKey(value) {
+  return kbNormalizeKeyBytes(value, 'session key');
+}
+
+export function kbLooksLikeSessionKey(value) {
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  if (!text.startsWith(KB_SESSION_KEY_PREFIX)) return false;
+  try {
+    kbNormalizeKeyBytes(text);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Short, human-checkable fingerprint of a key, so two parties can confirm out
+ * of band that they hold the same one (paper §III: robust key management).
+ */
+export function kbKeyFingerprint(key) {
+  const bytes = kbNormalizeKeyBytes(key);
+  try {
+    const digest = kbSha256(bytes);
+    // 8 bytes → 16 uppercase hex characters → four readable groups. Hex avoids
+    // the ambiguity of a base64url group that may itself contain "-".
+    const hex = [...digest.subarray(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+    return hex.match(/.{4}/g).join('-');
+  } finally {
+    kbZeroizeBytes(bytes);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -514,6 +677,10 @@ export function kbIsHardenedAlgorithm(alg) {
   return typeof alg === 'string' && alg.startsWith(`${KB_ALGORITHM_HARDENED}-`);
 }
 
+export function kbIsSessionKeyAlgorithm(alg) {
+  return alg === KB_ALGORITHM_SESSION;
+}
+
 /** Returns the work factor encoded in an `alg` string (0 when not hardened). */
 export function kbIterationsFromAlg(alg) {
   if (!kbIsHardenedAlgorithm(alg)) return 0;
@@ -581,7 +748,7 @@ export function kbParseEnvelope(str) {
     throw new KBError(KB_ERR.UNSUPPORTED_VERSION, `Unsupported envelope version v${version}.`);
   }
   const alg = parts[1];
-  if (alg !== KB_ALGORITHM && !kbIsHardenedAlgorithm(alg)) {
+  if (alg !== KB_ALGORITHM && !kbIsHardenedAlgorithm(alg) && !kbIsSessionKeyAlgorithm(alg)) {
     throw new KBError(KB_ERR.UNSUPPORTED_ALG, `Unsupported algorithm "${alg}".`);
   }
   const iterations = kbIterationsFromAlg(alg); // throws when out of range
@@ -615,6 +782,129 @@ export function kbLooksLikeEnvelope(str) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Algorithm 1 / Algorithm 2 — raw-key AEAD, base64 component dictionary */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Paper Algorithm 1, verbatim in shape:
+ *
+ *   nonce       <- 12 random bytes
+ *   ciphertext,
+ *   tag         <- ChaCha20-Poly1305(key_bytes, nonce).encrypt_and_digest(msg)
+ *   result      <- { "nonce": b64, "ciphertext": b64, "tag": b64 }
+ *
+ * @param {string} plaintext
+ * @param {Uint8Array|string} key 32 raw bytes, or their base64 / `kbk1.` form
+ * @param {{aad?: string, nonce?: Uint8Array, scratch?: Uint8Array}} [options]
+ * @returns {{nonce: string, ciphertext: string, tag: string}}
+ */
+export function kbEncryptToDict(plaintext, key, options = {}) {
+  const keyBytes = kbNormalizeKeyBytes(key);
+  try {
+    const nonce = options.nonce ? options.nonce.slice() : kbRandomBytes(KB_NONCE_BYTES);
+    if (nonce.length !== KB_NONCE_BYTES) {
+      throw new KBError(KB_ERR.BAD_ENVELOPE, `Nonce must be ${KB_NONCE_BYTES} bytes.`);
+    }
+    return kbWithPlaintextBytes(plaintext, options, (body) => {
+      const { ct, tag } = kbAeadSeal(keyBytes, nonce, body, kbUtf8(options.aad || ''));
+      return { nonce: kbB64Encode(nonce), ciphertext: kbB64Encode(ct), tag: kbB64Encode(tag) };
+    });
+  } finally {
+    kbZeroizeBytes(keyBytes);
+  }
+}
+
+/**
+ * Paper Algorithm 2: decode the three base64 components, decrypt and verify.
+ * A failed tag is reported with the same wording as the paper's `ValueError`.
+ */
+export function kbDecryptFromDict(dict, key, options = {}) {
+  // Accepts the object Algorithm 1 returns, or its JSON text (what a recipient
+  // pastes from a chat window).
+  const parsed = kbParseDict(dict);
+  const nonce = kbB64Decode(parsed.nonce, 'nonce');
+  const ct = kbB64Decode(parsed.ciphertext, 'ciphertext');
+  const tag = kbB64Decode(parsed.tag, 'tag');
+  if (nonce.length !== KB_NONCE_BYTES) {
+    throw new KBError(KB_ERR.BAD_ENVELOPE, `Nonce must be ${KB_NONCE_BYTES} bytes (got ${nonce.length}).`);
+  }
+  if (tag.length !== KB_TAG_BYTES) {
+    throw new KBError(KB_ERR.BAD_ENVELOPE, `Tag must be ${KB_TAG_BYTES} bytes (got ${tag.length}).`);
+  }
+  if (ct.length > KB_MAX_PAYLOAD_BYTES) {
+    throw new KBError(KB_ERR.BAD_ENVELOPE, 'Payload exceeds the 1 MiB safety limit.');
+  }
+  const keyBytes = kbNormalizeKeyBytes(key);
+  let plainBytes = null;
+  try {
+    plainBytes = kbAeadOpen(keyBytes, nonce, ct, tag, kbUtf8(options.aad || ''));
+  } finally {
+    kbZeroizeBytes(keyBytes);
+  }
+  try {
+    if (options.scratch && options.scratch.length >= plainBytes.length) {
+      options.scratch.set(plainBytes, 0);
+      return kbFromUtf8(options.scratch.subarray(0, plainBytes.length));
+    }
+    return kbFromUtf8(plainBytes);
+  } finally {
+    kbZeroizeBytes(plainBytes);
+    if (options.scratch) kbZeroizeBytes(options.scratch);
+  }
+}
+
+/** Recognises a JSON dictionary (or a parsed object) from Algorithm 1. */
+export function kbParseDict(value) {
+  let candidate = value;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text.startsWith('{')) throw new KBError(KB_ERR.BAD_ENVELOPE, 'Not a KryptBoard dictionary.');
+    try {
+      candidate = JSON.parse(text);
+    } catch (e) {
+      throw new KBError(KB_ERR.BAD_ENVELOPE, 'Malformed JSON dictionary.');
+    }
+  }
+  if (!candidate || typeof candidate !== 'object') {
+    throw new KBError(KB_ERR.BAD_ENVELOPE, 'Not a KryptBoard dictionary.');
+  }
+  // nonce and tag are always non-empty; an empty ciphertext is legal (an
+  // empty message still authenticates its AAD).
+  const required = ['nonce', 'tag'];
+  if (!required.every((name) => typeof candidate[name] === 'string' && candidate[name].trim().length > 0)
+    || typeof candidate.ciphertext !== 'string') {
+    throw new KBError(KB_ERR.BAD_ENVELOPE, 'Expected base64 nonce, ciphertext and tag fields.');
+  }
+  return { nonce: candidate.nonce, ciphertext: candidate.ciphertext, tag: candidate.tag };
+}
+
+export function kbLooksLikeDict(value) {
+  try {
+    kbParseDict(value);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** The dictionary form of an envelope, for recipients that expect Alg. 1 output. */
+export function kbEnvelopeToDict(envelopeOrParsed) {
+  const env = typeof envelopeOrParsed === 'string' ? kbParseEnvelope(envelopeOrParsed) : envelopeOrParsed;
+  return { nonce: kbB64Encode(env.nonce), ciphertext: kbB64Encode(env.ct), tag: kbB64Encode(env.tag) };
+}
+
+/** Wraps Algorithm 1's output back into the KryptBoard envelope string. */
+export function kbDictToEnvelope(dict, { alg = KB_ALGORITHM_SESSION } = {}) {
+  const parsed = kbParseDict(dict);
+  return kbFormatEnvelope({
+    alg,
+    nonce: kbB64Decode(parsed.nonce, 'nonce'),
+    ct: kbB64Decode(parsed.ciphertext, 'ciphertext'),
+    tag: kbB64Decode(parsed.tag, 'tag')
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* High level API                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -622,13 +912,9 @@ export function kbLooksLikeEnvelope(str) {
  * Encrypts a UTF-8 string and returns the KryptBoard envelope string.
  * @param {string} plaintext
  * @param {string} passphrase
- * @param {{aad?: string, hardened?: boolean, iterations?: number, nonce?: Uint8Array}} [options]
+ * @param {{aad?: string, hardened?: boolean, iterations?: number, nonce?: Uint8Array, scratch?: Uint8Array}} [options]
  */
 export async function kbEncrypt(plaintext, passphrase, options = {}) {
-  const message = kbUtf8(plaintext);
-  if (message.length > KB_MAX_PAYLOAD_BYTES) {
-    throw new KBError(KB_ERR.BAD_ENVELOPE, 'Message exceeds the 1 MiB safety limit.');
-  }
   const aadString = options.aad || '';
   const nonce = options.nonce ? options.nonce.slice() : kbRandomBytes(KB_NONCE_BYTES);
   if (nonce.length !== KB_NONCE_BYTES) {
@@ -636,9 +922,56 @@ export async function kbEncrypt(plaintext, passphrase, options = {}) {
   }
   const hardened = options.hardened === true;
   const iterations = kbClampIterations(options.iterations ?? KB_PBKDF2_ITERATIONS);
-  const key = await kbDeriveKey(passphrase, nonce, aadString, { hardened, iterations });
-  const { ct, tag } = kbAeadSeal(key, nonce, message, kbUtf8(aadString));
-  return kbFormatEnvelope({ alg: kbAlgorithmFor({ hardened, iterations }), nonce, ct, tag });
+  let key = null;
+  try {
+    key = await kbDeriveKey(passphrase, nonce, aadString, { hardened, iterations });
+    return await kbWithPlaintextBytes(plaintext, options, (body) => {
+      const { ct, tag } = kbAeadSeal(key, nonce, body, kbUtf8(aadString));
+      return kbFormatEnvelope({ alg: kbAlgorithmFor({ hardened, iterations }), nonce, ct, tag });
+    });
+  } finally {
+    kbZeroizeBytes(key);
+  }
+}
+
+/**
+ * Session-key variant of the high level API (paper §III single-session key).
+ * The envelope carries `CHACHA20-POLY1305+SESSIONKEY` so the recipient knows
+ * that the same raw key — and no KDF — was used.
+ */
+export function kbEncryptWithKey(plaintext, key, options = {}) {
+  const keyBytes = kbNormalizeKeyBytes(key);
+  try {
+    const nonce = options.nonce ? options.nonce.slice() : kbRandomBytes(KB_NONCE_BYTES);
+    if (nonce.length !== KB_NONCE_BYTES) {
+      throw new KBError(KB_ERR.BAD_ENVELOPE, `Nonce must be ${KB_NONCE_BYTES} bytes.`);
+    }
+    return kbWithPlaintextBytes(plaintext, options, (body) => {
+      const { ct, tag } = kbAeadSeal(keyBytes, nonce, body, kbUtf8(options.aad || ''));
+      return kbFormatEnvelope({ alg: KB_ALGORITHM_SESSION, nonce, ct, tag });
+    });
+  } finally {
+    kbZeroizeBytes(keyBytes);
+  }
+}
+
+export function kbDecryptWithKey(envelopeString, key, options = {}) {
+  const env = kbParseEnvelope(envelopeString);
+  if (!kbIsSessionKeyAlgorithm(env.alg)) {
+    throw new KBError(KB_ERR.UNSUPPORTED_ALG, `Envelope uses ${env.alg}, which is not a session-key envelope.`);
+  }
+  const keyBytes = kbNormalizeKeyBytes(key);
+  let plainBytes = null;
+  try {
+    plainBytes = kbAeadOpen(keyBytes, env.nonce, env.ct, env.tag, kbUtf8(options.aad || ''));
+  } finally {
+    kbZeroizeBytes(keyBytes);
+  }
+  try {
+    return kbFromUtf8(plainBytes);
+  } finally {
+    kbZeroizeBytes(plainBytes);
+  }
 }
 
 /**
@@ -647,12 +980,22 @@ export async function kbEncrypt(plaintext, passphrase, options = {}) {
  */
 export async function kbDecrypt(envelopeString, passphrase, options = {}) {
   const env = kbParseEnvelope(envelopeString);
+  if (kbIsSessionKeyAlgorithm(env.alg)) {
+    throw new KBError(KB_ERR.UNSUPPORTED_ALG, 'This envelope needs a session key, not a passphrase.');
+  }
   const aadString = options.aad || '';
-  const key = await kbDeriveKey(passphrase, env.nonce, aadString, {
-    hardened: kbIsHardenedAlgorithm(env.alg),
-    iterations: env.iterations || options.iterations
-  });
-  const plaintext = kbAeadOpen(key, env.nonce, env.ct, env.tag, kbUtf8(aadString));
-  return kbFromUtf8(plaintext);
+  let key = null;
+  let plaintext = null;
+  try {
+    key = await kbDeriveKey(passphrase, env.nonce, aadString, {
+      hardened: kbIsHardenedAlgorithm(env.alg),
+      iterations: env.iterations || options.iterations
+    });
+    plaintext = kbAeadOpen(key, env.nonce, env.ct, env.tag, kbUtf8(aadString));
+    return kbFromUtf8(plaintext);
+  } finally {
+    kbZeroizeBytes(key);
+    kbZeroizeBytes(plaintext);
+  }
 }
 

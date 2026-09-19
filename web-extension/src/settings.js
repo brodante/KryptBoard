@@ -8,8 +8,13 @@
  * when the session ends.
  */
 
+import { kbDecodeSessionKey, kbEncodeSessionKey, kbKeyFingerprint, kbNormalizeKeyBytes, kbZeroizeBytes } from './crypto.js';
+
 export const KB_SETTINGS_KEY = 'kryptboard:settings';
 export const KB_PASSPHRASE_KEY = 'kryptboard:passphrase';
+// The paper's single-session key (Algorithm 1's `key_bytes`). Like the
+// passphrase it is extension-only data and never touches sync/local storage.
+export const KB_SESSION_KEY_KEY = 'kryptboard:session-key';
 
 /** The single source of truth for defaults, mirrored in the options UI. */
 export const KB_DEFAULT_SETTINGS = Object.freeze({
@@ -27,7 +32,12 @@ export const KB_DEFAULT_SETTINGS = Object.freeze({
   commitStyle: 'auto', // 'auto' | 'native' | 'execCommand'
   ignorePasswordFields: true,
   hideOnEscape: true,
-  showHints: true
+  showHints: true,
+  // Paper §III: the proof of concept encrypts with a locally generated
+  // single-session key. 'passphrase' stays the default so existing envelopes
+  // and the Android IME keep interoperating.
+  keyModel: 'passphrase', // 'passphrase' | 'session'
+  sessionFormat: 'json' // 'json' (Algorithm 1 output) | 'envelope'
 });
 
 export const KB_SETTING_BOUNDS = Object.freeze({
@@ -35,6 +45,8 @@ export const KB_SETTING_BOUNDS = Object.freeze({
 });
 
 export const KB_MODES = Object.freeze(['plain', 'encrypted']);
+export const KB_KEY_MODELS = Object.freeze(['passphrase', 'session']);
+export const KB_SESSION_FORMATS = Object.freeze(['json', 'envelope']);
 export const KB_THEMES = Object.freeze(['dark', 'light', 'auto']);
 export const KB_COMMIT_STYLES = Object.freeze(['auto', 'native', 'execCommand']);
 export const KB_HOTKEY_PRESETS = Object.freeze([
@@ -79,6 +91,8 @@ export function kbNormalizeSettings(raw) {
     out.pbkdf2Iterations = Math.min(bounds.max, Math.max(bounds.min, Math.round(iterations / bounds.step) * bounds.step));
   }
 
+  if (KB_KEY_MODELS.includes(input.keyModel)) out.keyModel = input.keyModel;
+  if (KB_SESSION_FORMATS.includes(input.sessionFormat)) out.sessionFormat = input.sessionFormat;
   if (typeof input.aad === 'string') out.aad = input.aad.slice(0, 256);
   return out;
 }
@@ -290,5 +304,82 @@ export function kbCreatePassphraseVault(options = {}) {
     clear,
     has: () => inMemory.length > 0,
     isRemembered: () => remembered
+  };
+}
+
+/**
+ * Single-session key vault (paper §III, Algorithm 1).
+ *
+ * Holds the raw 32-byte key the proof of concept encrypts with. `remember ===
+ * false` keeps it in this content-script closure only; `remember === true`
+ * writes it to chrome.storage.session, which pages cannot read and the browser
+ * clears when the session ends. It is never written to sync/local storage, and
+ * every byte buffer we hand out is ours to zeroize on clear().
+ */
+export function kbCreateSessionKeyVault(options = {}) {
+  const session = options.sessionArea ? kbStorageArea(options.sessionArea) : null;
+  const key = options.key || KB_SESSION_KEY_KEY;
+  let bytes = null; // Uint8Array(32) | null
+  let remembered = false;
+
+  async function load() {
+    if (!session) return bytes;
+    try {
+      const got = await session.get(key);
+      const value = got ? got[key] : '';
+      if (typeof value === 'string' && value) {
+        bytes = kbDecodeSessionKey(value);
+        remembered = true;
+      }
+    } catch (e) {
+      bytes = null; // corrupt or foreign value → no key, never a crash
+    }
+    return bytes;
+  }
+
+  /** Returns a *copy*; the caller may zeroize it freely. */
+  function get() {
+    return bytes ? bytes.slice() : null;
+  }
+
+  async function set(keyMaterial, remember) {
+    clearBytes();
+    bytes = kbNormalizeKeyBytes(keyMaterial, 'session key');
+    remembered = remember === true;
+    if (!session) return;
+    try {
+      if (remembered) await session.set({ [key]: kbEncodeSessionKey(bytes) });
+      else await session.remove(key);
+    } catch (e) {
+      /* the in-memory key still works */
+    }
+  }
+
+  function clearBytes() {
+    kbZeroizeBytes(bytes);
+    bytes = null;
+  }
+
+  async function clear() {
+    clearBytes();
+    remembered = false;
+    if (!session) return;
+    try {
+      await session.remove(key);
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  return {
+    load,
+    get,
+    set,
+    clear,
+    has: () => bytes !== null,
+    isRemembered: () => remembered,
+    fingerprint: () => (bytes ? kbKeyFingerprint(bytes) : ''),
+    /** Sharing string for the recipient's client. */
+    share: () => (bytes ? kbEncodeSessionKey(bytes) : '')
   };
 }

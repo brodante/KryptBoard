@@ -7,8 +7,25 @@
  * anything itself.
  */
 
-import { kbEncrypt, kbDecrypt, kbDescribeEnvelope, kbParseEnvelope, KBError } from './crypto.js';
-import { kbCreateSettingsStore, KB_HOTKEY_PRESETS } from './settings.js';
+import {
+  kbEncrypt,
+  kbDecrypt,
+  kbDescribeEnvelope,
+  kbParseEnvelope,
+  kbEncryptToDict,
+  kbEncryptWithKey,
+  kbDecryptFromDict,
+  kbDecryptWithKey,
+  kbLooksLikeDict,
+  kbLooksLikeEnvelope,
+  kbGenerateSessionKey,
+  kbEncodeSessionKey,
+  kbKeyFingerprint,
+  kbNormalizeKeyBytes,
+  kbLooksLikeSessionKey,
+  KBError
+} from './crypto.js';
+import { kbCreateSettingsStore, kbCreateSessionKeyVault, KB_HOTKEY_PRESETS } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,7 +48,9 @@ const SETTING_FIELDS = [
   ['set-hardenedKdf', 'hardenedKdf', 'checked'],
   ['set-pbkdf2Iterations', 'pbkdf2Iterations', 'value'],
   ['set-aad', 'aad', 'value'],
-  ['set-commitStyle', 'commitStyle', 'value']
+  ['set-commitStyle', 'commitStyle', 'value'],
+  ['set-keyModel', 'keyModel', 'value'],
+  ['set-sessionFormat', 'sessionFormat', 'value']
 ];
 
 function fillForms(settings) {
@@ -142,6 +161,80 @@ async function onClearPassphrase() {
 }
 
 /* ------------------------------------------------------------------ */
+/* session key (paper §III: single-session key model)                  */
+/* ------------------------------------------------------------------ */
+
+// Extension pages may use storage.session directly; the content script
+// receives the key over the message API instead of reading storage itself.
+const sessionVault = kbCreateSessionKeyVault({ sessionArea: chrome.storage && chrome.storage.session });
+
+function renderSessionKey() {
+  const state = $('session-key-state');
+  const hint = $('session-key-hint');
+  const has = sessionVault.has();
+  state.textContent = has ? `Session key ready (${sessionVault.fingerprint()})` : 'No session key';
+  state.className = `status ${has ? 'open' : ''}`;
+  hint.innerHTML = has
+    ? 'Fingerprint: <span class="muted">' + sessionVault.fingerprint() + '</span> — compare it out of band with the other side.'
+    : 'Fingerprint: <span class="muted">none yet</span>';
+  const model = $('set-keyModel');
+  if (model) $('session-format-field').hidden = model.value !== 'session';
+}
+
+function pushSessionKey() {
+  const key = sessionVault.share();
+  chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+    if (!tab) return;
+    chrome.tabs
+      .sendMessage(tab.id, { type: 'kryptboard:set-session-key', key })
+      .catch(() => {});
+  });
+}
+
+async function generateSessionKey() {
+  await sessionVault.set(kbGenerateSessionKey(), true);
+  renderSessionKey();
+  pushSessionKey();
+  $('session-key-state').textContent = `Session key ready (${sessionVault.fingerprint()}) — share it with the other side.`;
+}
+
+async function importSessionKey() {
+  const input = $('session-import');
+  const value = input.value.trim();
+  if (!value) return;
+  if (!kbLooksLikeSessionKey(value)) {
+    $('session-key-state').className = 'status blocked';
+    $('session-key-state').textContent = 'That does not look like a KryptBoard key (expected kbk1.… or base64).';
+    return;
+  }
+  await sessionVault.set(kbNormalizeKeyBytes(value), true);
+  input.value = '';
+  renderSessionKey();
+  pushSessionKey();
+}
+
+async function forgetSessionKey() {
+  await sessionVault.clear();
+  renderSessionKey();
+  chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+    if (!tab) return;
+    chrome.tabs.sendMessage(tab.id, { type: 'kryptboard:clear-session-key' }).catch(() => {});
+  });
+}
+
+async function copySessionKey() {
+  const shared = sessionVault.share();
+  if (!shared) return;
+  try {
+    await navigator.clipboard.writeText(shared);
+    $('session-key-state').textContent = 'Sharing string copied — send it to the other side over a different channel.';
+  } catch (error) {
+    $('session-import').value = shared;
+    $('session-import').select();
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* crypto console                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -154,24 +247,49 @@ async function runEncrypt() {
   const meta = $('enc-meta');
   const plaintext = $('enc-plain').value;
   const passphrase = $('enc-pass').value;
+  const settings = store.get();
+  const useSessionKey = settings.keyModel === 'session';
+
   if (!plaintext) {
     meta.className = 'hint warn';
     meta.textContent = 'Enter a message to seal.';
     return;
   }
-  if (!passphrase) {
+  if (useSessionKey && !sessionVault.has()) {
+    meta.className = 'hint warn';
+    meta.textContent = 'Generate or import a session key first.';
+    return;
+  }
+  if (!useSessionKey && !passphrase) {
     meta.className = 'hint warn';
     meta.textContent = 'Enter a passphrase.';
     return;
   }
+
   try {
     const started = performance.now();
-    const envelope = await kbEncrypt(plaintext, passphrase, currentOptions());
+    let output;
+    let label;
+    if (useSessionKey) {
+      // Algorithm 1 (dictionary) or the same thing as an envelope string.
+      const key = sessionVault.get();
+      if (settings.sessionFormat === 'json') {
+        output = JSON.stringify(kbEncryptToDict(plaintext, key, currentOptions()));
+        label = 'dictionary';
+      } else {
+        output = kbEncryptWithKey(plaintext, key, currentOptions());
+        label = 'envelope';
+      }
+    } else {
+      output = await kbEncrypt(plaintext, passphrase, currentOptions());
+      label = 'envelope';
+    }
     const elapsed = performance.now() - started;
-    $('enc-out').value = envelope;
-    const info = kbDescribeEnvelope(kbParseEnvelope(envelope));
+    $('enc-out').value = output;
     meta.className = 'hint ok';
-    meta.textContent = `${info.plaintextBytes} B plaintext → ${info.envelopeBytes} B envelope in ${elapsed.toFixed(1)} ms (${info.algorithm}).`;
+    meta.textContent = useSessionKey
+      ? `${plaintext.length} characters → ${output.length} B session ${label} in ${elapsed.toFixed(1)} ms (${kbKeyFingerprint(sessionVault.get())}).`
+      : `${kbDescribeEnvelope(kbParseEnvelope(output)).plaintextBytes} B plaintext → ${kbDescribeEnvelope(kbParseEnvelope(output)).envelopeBytes} B envelope in ${elapsed.toFixed(1)} ms (${kbParseEnvelope(output).alg}).`;
   } catch (error) {
     meta.className = 'hint error';
     meta.textContent = error instanceof KBError ? error.message : String(error);
@@ -182,14 +300,36 @@ async function runDecrypt() {
   const meta = $('dec-meta');
   const envelope = $('dec-env').value.trim();
   const passphrase = $('dec-pass').value;
+  const settings = store.get();
   if (!envelope) {
     meta.className = 'hint warn';
-    meta.textContent = 'Paste an envelope first.';
+    meta.textContent = 'Paste an envelope or a {nonce, ciphertext, tag} dictionary first.';
+    return;
+  }
+  const isDict = kbLooksLikeDict(envelope);
+  if (!isDict && !kbLooksLikeEnvelope(envelope)) {
+    meta.className = 'hint warn';
+    meta.textContent = 'That is neither a v1 envelope nor an Algorithm-1 dictionary.';
+    return;
+  }
+  const needsSessionKey = isDict || settings.keyModel === 'session';
+  if (needsSessionKey && !sessionVault.has()) {
+    meta.className = 'hint warn';
+    meta.textContent = 'This message needs the session key — generate or import one above.';
+    return;
+  }
+  if (!needsSessionKey && !passphrase) {
+    meta.className = 'hint warn';
+    meta.textContent = 'Enter the passphrase that sealed this message.';
     return;
   }
   try {
     const started = performance.now();
-    const plaintext = await kbDecrypt(envelope, passphrase, currentOptions());
+    const plaintext = needsSessionKey
+      ? (isDict
+          ? kbDecryptFromDict(envelope, sessionVault.get(), currentOptions())
+          : kbDecryptWithKey(envelope, sessionVault.get(), currentOptions()))
+      : await kbDecrypt(envelope, passphrase, currentOptions());
     const elapsed = performance.now() - started;
     $('dec-out').value = plaintext;
     meta.className = 'hint ok';
@@ -256,6 +396,19 @@ async function boot() {
   // the iteration count is only meaningful while hardening is on
   $('set-hardenedKdf').addEventListener('change', () => {
     $('set-pbkdf2Iterations').disabled = $('set-hardenedKdf').checked !== true;
+  });
+
+  await sessionVault.load();
+  renderSessionKey();
+  if (sessionVault.has()) pushSessionKey();
+
+  $('session-generate').addEventListener('click', generateSessionKey);
+  $('session-copy').addEventListener('click', copySessionKey);
+  $('session-clear').addEventListener('click', forgetSessionKey);
+  $('session-import').addEventListener('change', importSessionKey);
+  $('set-keyModel').addEventListener('change', () => {
+    renderSessionKey();
+    if (store.get().keyModel === 'session' && sessionVault.has()) pushSessionKey();
   });
 
   $('toggle').addEventListener('click', onToggle);

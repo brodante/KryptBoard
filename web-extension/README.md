@@ -11,15 +11,20 @@ phone and vice versa:
 
 ```
 KryptBoard v1 envelope
-v1|CHACHA20-POLY1305|<nonce>|<ciphertext>|<tag>          (all base64url, unpadded)
-v1|CHACHA20-POLY1305+PBKDF2-200000|<nonce>|<ct>|<tag>    (passphrase-hardened variant)
+v1|CHACHA20-POLY1305|<nonce>|<ciphertext>|<tag>             (all base64url, unpadded)
+v1|CHACHA20-POLY1305+PBKDF2-200000|<nonce>|<ct>|<tag>       (passphrase-hardened variant)
+v1|CHACHA20-POLY1305+SESSIONKEY|<nonce>|<ct>|<tag>          (session-key variant)
+
+Paper Algorithm 1 dictionary (the session-key model)
+{"nonce":"…","ciphertext":"…","tag":"…"}                    (standard base64, padded)
 ```
 
-> **Note on the paper.** The published paper is not part of this checkout, so the design here
-> was derived from the Android implementation it describes: the buffered plaintext, the
-> `v1|alg|nonce|ct|tag` envelope, ChaCha20-Poly1305, and a locally-held passphrase.
-> **[Section "Matching the paper exactly"](#matching-the-paper-exactly)** lists every constant
-> and function to adjust if the paper pins different parameters — all of them live in one file.
+The paper's construction — the single-session key, Algorithm 1's `{nonce, ciphertext, tag}`
+dictionary and Algorithm 2's verify-then-decrypt — is implemented in full; the passphrase
+model is kept alongside it because it is what the Android app shares.
+**[Section "Matching the paper exactly"](#matching-the-paper-exactly)** maps every
+requirement of the paper to the file that implements it, including the two deliberate
+deviations.
 
 ---
 
@@ -33,6 +38,9 @@ v1|CHACHA20-POLY1305+PBKDF2-200000|<nonce>|<ct>|<tag>    (passphrase-hardened va
 - [Architecture](#architecture)
 - [Interoperating with the Android app](#interoperating-with-the-android-app)
 - [Matching the paper exactly](#matching-the-paper-exactly)
+- [The paper's session-key model](#the-papers-session-key-model)
+- [Buffer lifecycle and zeroization](#buffer-lifecycle-and-zeroization)
+- [Performance](#performance)
 - [Tests](#tests)
 - [Try it without installing](#try-it-without-installing)
 
@@ -85,7 +93,11 @@ Concretely, the extension gives you:
 
 ## How the crypto works
 
-Both sides derive the same key from a shared passphrase and the per-message nonce:
+There are two key models. Both use the same AEAD and the same 12-byte random nonce; they
+differ only in where the 32-byte key comes from.
+
+**Passphrase model (default, interoperable with the Android app):** both sides derive the
+same key from a shared passphrase and the per-message nonce:
 
 ```
 salt = nonce (12 bytes, fresh per message)
@@ -113,6 +125,12 @@ ct, tag = ChaCha20-Poly1305(key, nonce, plaintext, aad = context label)
   re-derived from that nonce, so repeated plaintext yields unrelated ciphertexts.
 - **Wiped state.** The buffer is cleared as soon as it has been sealed; nothing is written to
   disk, and the passphrase never leaves the extension's own storage (see below).
+
+**Session-key model (the paper's Algorithm 1):** a 32-byte key generated locally by the
+extension is used directly, with no KDF at all, and the message is emitted either as the
+paper's base64 dictionary or as the `+SESSIONKEY` envelope. See
+[The paper's session-key model](#the-papers-session-key-model) for how the key is created,
+shared, fingerprinted and wiped.
 
 ## Threat model
 
@@ -233,41 +251,131 @@ the context label. The repository's test suite pins the browser's half with gold
 
 ## Matching the paper exactly
 
-Everything the paper could pin down lives in two places, both small:
+The paper (*Secure Your Words Before You Send: The KryptBoard Pre-Send Encryption
+Method*, §III and Algorithms 1–2) specifies the method; this is where each piece of it
+lives and how faithful the implementation is.
 
-| Parameter | Where | Current value |
+| Paper requirement | Where it lives | Status |
 |---|---|---|
-| Envelope layout | `kbFormatEnvelope` / `kbParseEnvelope` in `src/crypto.js` | `v1\|alg\|nonce\|ct\|tag`, base64url |
-| AEAD | `kbAeadSeal` / `kbAeadOpen` | ChaCha20-Poly1305, RFC 8439 |
-| KDF | `kbDeriveKey`, `kbKdfInfo` | HKDF-SHA256, salt = nonce, documented `info` string |
-| Hardening | `KB_PBKDF2_ITERATIONS`, `kbAlgorithmFor` | PBKDF2-HMAC-SHA256, 200 000, recorded in `alg` |
-| Nonce size | `KB_NONCE_BYTES` | 12 |
-| Tag size | `KB_TAG_BYTES` | 16 |
-| Context binding | `aad` setting / `AAD` parameter | off by default |
-| Mode semantics | `src/keyboard.js` (`applyMode`, `handleSend`) | buffered vs. direct commit |
+| Two modes, Plain and Encrypt, toggled from a persistent browser-toolbar UI | `src/keyboard.js` (`setMode`), `src/popup.html` / `popup.js` (*Key model*, *Open keyboard*, mode chips inside the overlay) | ✅ implemented — the overlay shows the mode on every surface, and the popup toggles it from the toolbar |
+| Keystrokes held in an isolated buffer, encrypted as one message on demand | `src/keyboard.js` — encrypted mode buffers; `Encrypt & Send` seals | ✅ implemented |
+| **Algorithm 1** — 12-byte random nonce, `ChaCha20-Poly1305(key_bytes, nonce).encrypt_and_digest(msg)`, result `{nonce, ciphertext, tag}` base64-encoded | `kbEncryptToDict` in `src/crypto.js` | ✅ implemented byte-for-byte: standard base64 **with** padding, exactly the fields the paper names |
+| **Algorithm 2** — decode the three base64 components, `decrypt_and_verify`, fail on a bad tag | `kbDecryptFromDict` | ✅ implemented; a failed tag raises `AUTH_FAILED` (the paper's `ValueError`) |
+| Ciphertext injected into the web app's own text field, no site modifications | `commitToPage` (`kbCommitToTarget`) | ✅ implemented; works on `input`, `textarea` and `contenteditable` |
+| Single-session key generated and managed locally in extension storage, no key exchange in the PoC | `kbGenerateSessionKey`, `kbCreateSessionKeyVault`, `src/content.js` (in-memory), popup *Session key* card | ✅ implemented as the `session` key model; the key can be shared out of band as a `kbk1.…` string and verified by fingerprint |
+| Immediate zeroization of the plaintext buffer after encryption or on cancel | `kbZeroizeBytes` + `kbZeroizeBytes`/scratch handling in every encrypt path; buffer and textarea wiped on send, cancel and hide | ✅ implemented for every byte buffer we own — see the caveat below |
+| Plaintext never visible to the page | closed shadow root + content-script closure; keystroke/input/composition/paste events stopped at the shadow boundary | ✅ implemented, with tests |
+| No clipboard use for sensitive data unless the user asks | clipboard is touched only by explicit Copy/Paste buttons, and the seal-with-no-target fallback copies **ciphertext** | ✅ implemented |
+| Recipient-side client to decrypt | the popup's *Decrypt* tab (standalone tool for envelopes **and** Algorithm-1 dictionaries) plus the in-page overlay | ✅ implemented |
+| Performance: negligible encryption overhead, linear in message length | `npm run bench` | ✅ measured, with a caveat — see [Performance](#performance) |
 
-If the paper's construction differs (for example a different `info` string, an X25519 exchange
-instead of a shared passphrase, or a different envelope separator), change it in
-`src/crypto.js` only — the UI, the tests and the DOM layer all consume that module, and
-`tests/crypto.test.mjs` will tell you exactly which vectors moved.
+Two deliberate deviations, both to keep the wire format interoperable:
+
+1. **Envelopes stay base64url, dictionaries use standard base64.** The paper's Algorithm 1
+   returns `base64.b64encode` output, and `kbEncryptToDict` matches it exactly. The
+   `v1|alg|nonce|ct|tag` envelope — which the Android IME and the golden interop vectors
+   use — keeps the unpadded URL-safe alphabet so a single string survives being pasted
+   into a URL, a JSON field or a chat box. Both are implemented; the session model can
+   emit either (`Session output` in the popup, `sessionFormat` in settings).
+2. **A passphrase key model is kept alongside the paper's raw-key model.** The paper's
+   proof of concept has no KDF (Algorithm 1 takes `key_bytes` directly). Deriving the key
+   from a passphrase (HKDF-SHA256, optional PBKDF2 hardening) is what makes the extension
+   usable without transferring a key first, and it is the model the Android app shares.
+   The passphrase model remains the default; `keyModel: "session"` switches the overlay
+   to the paper's construction.
+
+## The paper's session-key model
+
+Set **Key model → Single-session key** in the popup, press **Generate key**, and the
+overlay seals with that raw key instead of a passphrase:
+
+```
+overlay buffer ──▶ kbEncryptToDict(msg, key) ──▶ {"nonce":"…","ciphertext":"…","tag":"…"}
+                                                  (or v1|CHACHA20-POLY1305+SESSIONKEY|…)
+```
+
+- The key is 32 random bytes. The popup keeps it in `chrome.storage.session`
+  (extension-only, cleared when the browser session ends) and hands it to the page's
+  content script over the message API; the content script holds it **in memory only** —
+  it is never written to `sync`/`local` storage, and the previous key is overwritten with
+  zeros when it is replaced or cleared.
+- **Share** it with the other side as `kbk1.<base64url>` (the popup has a *Copy sharing
+  string* button). Anyone holding that string can read the messages — send it over a
+  different channel.
+- Both sides compare the **fingerprint** (e.g. `A1B2-C3D4-E5F6-0718`, the first 8 bytes of
+  SHA-256 of the key) out of band before trusting the channel.
+- To read a message that used the session key, paste it into either the in-page overlay or
+  the popup's *Decrypt* tab; both detect Algorithm-1 dictionaries automatically and say so
+  if no key is loaded.
+
+## Buffer lifecycle and zeroization
+
+The paper requires the plaintext buffer to be overwritten the moment it is not needed
+(after sealing, or on cancel). What that means concretely here:
+
+| Moment | What is wiped |
+|---|---|
+| `Encrypt & Send` | The overlay's buffer string and textarea are cleared, and every byte buffer involved in sealing (UTF-8 plaintext, derived key, scratch) is overwritten with zeros inside `kbEncrypt`/`kbEncryptToDict` before the call returns |
+| Cancel / Hide (with *Wipe the buffer when hiding it*) | Buffer and textarea cleared; no plaintext byte buffer survives the seal path |
+| Replacing or clearing a session key | The old key bytes are zeroed before the new value is stored (`kbZeroizeBytes`) |
+| Browser session end | `chrome.storage.session` is dropped by the browser |
+
+**Caveat, stated plainly:** JavaScript strings are immutable. Once the buffer has been read
+into a string by the engine, that particular copy cannot be overwritten — only dropped for
+the garbage collector. Every *byte buffer* this extension owns is zeroed, and callers can
+pass `options.scratch` to `kbEncrypt`/`kbEncryptToDict`/`kbDecryptFromDict` to keep the
+plaintext in memory they control; a test asserts the scratch is all zeros afterwards. A
+byte-exact zeroization guarantee would need a WASM memory region, which is future work.
+
+## Performance
+
+Measured with `npm run bench` (Node 22, single core, this implementation, no hardware
+acceleration). The paper's Table 4 quotes ~450 MB/s for ChaCha20-Poly1305 and Figs. 4–5
+show negligible, linear overhead — those figures come from a native build; the extension
+ships a **portable pure-JS** implementation (no WASM, no dependencies, identical on every
+browser), so the honest numbers are these:
+
+| message | envelope | AEAD seal | AEAD open | AEAD MB/s | passphrase seal (incl. HKDF) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 500 B | 728 B | 0.149 ms | 0.078 ms | 3.2 | 0.191 ms |
+| 1 KiB | 1 427 B | 0.137 ms | 0.120 ms | 7.1 | 0.177 ms |
+| 16 KiB | 21 907 B | 1.850 ms | 1.610 ms | 8.4 | 1.869 ms |
+| 64 KiB | 87 443 B | 8.100 ms | 6.423 ms | 7.7 | 8.200 ms |
+| 256 KiB | 349 587 B | 28.7 ms | 27.7 ms | 8.7 | 32.5 ms |
+| 1 MiB | 1 398 163 B | 193 ms | 127 ms | 5.2 | 222 ms |
+
+- **The usability claim holds**: a 500-character message adds ~0.15 ms of sealing on top of
+  a ~0.19 ms total, i.e. far below one frame. There is no per-keystroke derivation —
+  encryption happens once, when the user asks for it.
+- **Scaling is linear**: per-byte cost varies by 1.6× between 500 B and 1 MiB (constant
+  until cache pressure appears), not quadratically. `tests/bench.test.mjs` fails if that
+  ever changes class.
+- **Throughput is not the paper's 450 MB/s.** The bottleneck is the portable Poly1305
+  big-integer accumulator; 8 MB/s is ~40 000× faster than a person types, so it does not
+  matter for this workload. Two ways to close the gap if it ever does: a 32-bit-limb
+  Poly1305 (pure JS, ~10×), or `crypto.subtle` where the browser supports
+  `ChaCha20-Poly1305` (Firefox and Safari do; Chrome and Node's WebCrypto do not, which is
+  exactly why the portable path is the default).
 
 ## Tests
 
 ```bash
-npm test                   # everything: 140 tests across ten suites
-npm run test:crypto        # 32 tests: primitives, envelope, interop vectors, fuzzing
-npm run test:dom           # 32 tests: the built bundle inside a simulated page
+npm test                   # everything: 165 tests across eleven suites
+npm run test:crypto        # 44 tests: primitives, envelope + dictionary, interop vectors, fuzzing
+npm run test:dom           # 37 tests: the built bundle inside a simulated page
+npm run bench              # measured throughput / overhead / scaling
 npm run build -- --check   # fail if bundle/content.js is stale
 ```
 
 | suite | tests | what it pins down |
 | --- | ---: | --- |
-| `crypto.test.mjs` | 32 | RFC 8439 / 5869 / 4231 / 7914 vectors, the golden interop envelope, plus fuzzing: 250 random round-trips, every single-bit corruption of nonce/ciphertext/tag rejected, 80 structural mutilations classified, no plaintext or repeated nonce in 120 envelopes |
-| `dom.test.mjs` | 32 | the *built* bundle in jsdom driven like a user (hotkey → keys → Encrypt & Send), plus the editing primitives: maxlength, selection replacement, `beforeinput` cancellation, framework events, caret handling, clipboard copy/paste, shift lock, themes |
+| `crypto.test.mjs` | 44 | RFC 8439 / 5869 / 4231 / 7914 vectors, the golden interop envelope, Algorithm 1/2 dictionaries (shape, padding, JSON round-trip, tampering, wrong key), session keys and fingerprints, zeroization, plus fuzzing: 250 random round-trips, every single-bit corruption of nonce/ciphertext/tag rejected, 80 structural mutilations classified, no plaintext or repeated nonce in 120 envelopes |
+| `dom.test.mjs` | 37 | the *built* bundle in jsdom driven like a user (hotkey → keys → Encrypt & Send), the paper's session-key sealing (dictionary and envelope output, refusal without a key, Algorithm-2 decryption of a pasted dictionary), plus the editing primitives: maxlength, selection replacement, `beforeinput` cancellation, framework events, caret handling, clipboard copy/paste, shift lock, themes |
 | `settings.test.mjs` | 16 | frozen defaults, hostile input (prototype pollution, garbage types), hotkey parsing/matching, the store's load/save/reset/subscribe paths, the passphrase vault's memory-vs-remembered rules, and a change landing mid-load |
 | `wiring.test.mjs` | 13 | exact hotkey matching (near-miss combos, auto-repeat, disabled), target rules (readonly, `contenteditable`, buttons, selects), password exclusion and its opt-out, focus inside the overlay, teardown |
-| `content.test.mjs` | 8 | double injection, foreign/unknown messages, the popup message API, replies that wait for storage to load, and settings/passphrase pushes from other tabs |
-| `popup.test.mjs` | 10 | popup boot, the isolated composer (seal, verify, wrong passphrase, AAD, work factor), settings persistence, tabs, blocked pages, clipboard fallback |
+| `content.test.mjs` | 12 | double injection, foreign/unknown messages, the popup message API, session-key hand-over and wiping, replies that wait for storage to load, and settings/passphrase pushes from other tabs |
+| `popup.test.mjs` | 11 | popup boot, the isolated composer (passphrase **and** session-key models, seal, verify, wrong passphrase, AAD, work factor), session-key generate/import/copy/forget, settings persistence, tabs, blocked pages, clipboard fallback |
+| `bench.test.mjs` | 3 | performance guards: a 500-character seal stays far below a frame, per-byte cost stays linear from 1 KiB to 64 KiB |
 | `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
 | `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |
 | `static.test.mjs` | 13 | packaging, permissions, no-network, markup/script cross-checks, the `[hidden]` CSS guard |

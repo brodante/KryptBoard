@@ -33,6 +33,8 @@ export function kbDeepActiveElement(doc) {
  * @param {(cb: (s: object) => void) => void} [options.adapter.subscribeSettings]
  * @param {() => Promise<string>} [options.adapter.getPassphrase]
  * @param {(p: string, remember: boolean) => Promise<void>} [options.adapter.savePassphrase]
+ * @param {() => Uint8Array|null} [options.adapter.getSessionKey] single-session key (paper §III)
+ * @param {() => string} [options.adapter.getSessionKeyFingerprint]
  * @param {string} [options.adapter.cssHref]
  * @param {string} [options.adapter.inlineCss]
  * @param {Document} [options.doc]
@@ -56,6 +58,8 @@ export function kbWireKeyboard(options) {
     getSettings,
     getPassphrase: adapter.getPassphrase,
     savePassphrase: adapter.savePassphrase,
+    getSessionKey: adapter.getSessionKey,
+    getSessionKeyFingerprint: adapter.getSessionKeyFingerprint,
     onThemeChange: (theme) => {
       if (adapter.saveSettings) Promise.resolve(adapter.saveSettings({ theme })).catch(() => {});
     },

@@ -602,3 +602,201 @@ test('64 KiB stays comfortably fast (no accidental quadratic behaviour)', async 
   assert.equal(recovered.length, plaintext.length);
   assert.ok(elapsed < 5000, `64 KiB round-trip took ${elapsed} ms`);
 });
+
+/* ------------------------------------------------------------------ */
+/* Paper Algorithm 1 & 2: raw-key AEAD with a base64 dictionary        */
+/* ------------------------------------------------------------------ */
+
+import {
+  kbEncryptToDict, kbDecryptFromDict, kbParseDict, kbLooksLikeDict,
+  kbEnvelopeToDict, kbDictToEnvelope, kbEncryptWithKey, kbDecryptWithKey,
+  kbGenerateSessionKey, kbEncodeSessionKey, kbDecodeSessionKey,
+  kbNormalizeKeyBytes, kbKeyFingerprint, kbLooksLikeSessionKey, kbZeroizeBytes,
+  kbB64Encode, kbB64Decode, kbIsSessionKeyAlgorithm, KB_ALGORITHM_SESSION, KB_SESSION_KEY_BYTES
+} from '../src/crypto.js';
+
+const PAPER_KEY = kbB64Decode('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'); // 0x00..0x1f
+const PAPER_NONCE = kbB64Decode('AAECAwQFBgcICQoL');
+
+test('Algorithm 1 output is a base64 dictionary of nonce, ciphertext and tag', () => {
+  const dict = kbEncryptToDict('KryptBoard pre-send encryption', PAPER_KEY, { nonce: PAPER_NONCE });
+  assert.deepEqual(Object.keys(dict).sort(), ['ciphertext', 'nonce', 'tag']);
+  for (const value of Object.values(dict)) assert.equal(typeof value, 'string');
+
+  // standard alphabet with padding, exactly like base64.b64encode
+  assert.equal(dict.nonce, 'AAECAwQFBgcICQoL');
+  assert.match(dict.tag, /^[A-Za-z0-9+/]{22}==$/, 'a 16-byte tag encodes to 22 characters plus "=="');
+  assert.equal(kbB64Decode(dict.nonce).length, 12);
+  assert.equal(kbB64Decode(dict.tag).length, 16);
+});
+
+test('Algorithm 1 → Algorithm 2 round-trips, including multi-byte text', () => {
+  const message = 'नमस्ते 🌏 — 42 €';
+  const dict = kbEncryptToDict(message, PAPER_KEY);
+  assert.equal(kbDecryptFromDict(dict, PAPER_KEY), message);
+
+  // a JSON string copy behaves the same as the object
+  assert.equal(kbDecryptFromDict(JSON.stringify(dict), PAPER_KEY), message);
+  assert.equal(kbLooksLikeDict(JSON.stringify(dict)), true);
+  assert.equal(kbLooksLikeDict('{"nonce":"AA=="}'), false);
+  assert.equal(kbLooksLikeDict('not json'), false);
+});
+
+test('the dictionary and envelope forms carry the same bytes', () => {
+  const key = kbGenerateSessionKey();
+  const envelope = kbEncryptWithKey('both shapes', key, { nonce: PAPER_NONCE });
+  const env = kbParseEnvelope(envelope);
+  const dict = kbEnvelopeToDict(env);
+
+  assert.deepEqual(dict, { nonce: kbB64Encode(env.nonce), ciphertext: kbB64Encode(env.ct), tag: kbB64Encode(env.tag) });
+  assert.equal(kbIsSessionKeyAlgorithm(env.alg), true);
+  assert.equal(kbDecryptFromDict(dict, key), 'both shapes');
+
+  // and the two wrappers are inverses of each other
+  assert.equal(kbDictToEnvelope(dict).split('|')[4], env.alg === KB_ALGORITHM_SESSION ? kbB64UrlEncode(env.tag) : '');
+});
+
+test('a tampered dictionary reports the paper’s failure wording', () => {
+  const key = kbGenerateSessionKey();
+  const dict = kbEncryptToDict('tamper target', key);
+  const flipped = { ...dict, tag: kbB64Encode((() => { const t = kbB64Decode(dict.tag); t[0] ^= 1; return t; })()) };
+
+  assert.throws(() => kbDecryptFromDict(flipped, key), (error) => {
+    assert.equal(error.code, 'AUTH_FAILED');
+    assert.match(error.message, /Invalid tag|Authentication failed/i);
+    return true;
+  });
+
+  // wrong key, wrong AAD, truncated ciphertext
+  assert.throws(() => kbDecryptFromDict(dict, kbGenerateSessionKey()), /Invalid tag|Authentication/i);
+  assert.throws(() => kbDecryptFromDict(dict, key, { aad: 'other' }), (e) => e.code === 'AUTH_FAILED');
+  assert.throws(() => kbDecryptFromDict({ ...dict, ciphertext: dict.ciphertext.slice(0, 2) }, key), (e) => e.code === 'AUTH_FAILED');
+});
+
+test('malformed dictionaries are rejected before any crypto happens', () => {
+  const key = kbGenerateSessionKey();
+  const cases = [
+    [null, /Not a KryptBoard dictionary/],
+    [42, /Not a KryptBoard dictionary/],
+    [{}, /nonce, ciphertext and tag/],
+    [{ nonce: 'AAECAwQFBgcICQoL', ciphertext: 'AAAA', tag: 'AAAA' }, /Tag must be 16 bytes/],
+    [{ nonce: 'AAECAwQFBgcICQo=', ciphertext: 'AAAA', tag: kbB64Encode(new Uint8Array(16)) }, /Nonce must be 12 bytes/],
+    [{ nonce: '!!!!', ciphertext: 'AAAA', tag: 'AAAA' }, /Invalid character/]
+  ];
+  for (const [input, pattern] of cases) {
+    assert.throws(() => kbDecryptFromDict(input, key), pattern, JSON.stringify(input));
+  }
+  assert.throws(() => kbParseDict('{'), /Malformed JSON/);
+});
+
+test('session keys: generation, sharing string, fingerprint, strict lengths', () => {
+  const key = kbGenerateSessionKey();
+  assert.equal(key.length, KB_SESSION_KEY_BYTES);
+
+  const shared = kbEncodeSessionKey(key);
+  assert.match(shared, /^kbk1\.[A-Za-z0-9_-]{43}$/);
+  assert.equal(kbLooksLikeSessionKey(shared), true);
+  assert.equal(kbLooksLikeSessionKey('kbk1.not-base64!'), false);
+  assert.equal(kbLooksLikeSessionKey('plain text'), false);
+  assert.deepEqual(kbDecodeSessionKey(shared), key, 'the sharing string decodes to the same bytes');
+  assert.deepEqual(kbNormalizeKeyBytes(shared), key);
+  assert.deepEqual(kbNormalizeKeyBytes(kbB64Encode(key)), key, 'standard base64 is accepted too');
+
+  // fingerprints are stable, short and key-dependent
+  assert.equal(kbKeyFingerprint(key), kbKeyFingerprint(shared));
+  assert.match(kbKeyFingerprint(key), /^[0-9A-F]{4}(-[0-9A-F]{4}){3}$/);
+  assert.notEqual(kbKeyFingerprint(key), kbKeyFingerprint(kbGenerateSessionKey()));
+
+  assert.throws(() => kbNormalizeKeyBytes(new Uint8Array(16)), /must be 32 bytes/);
+  assert.throws(() => kbNormalizeKeyBytes(''), /required/);
+  assert.throws(() => kbNormalizeKeyBytes(null), /required/);
+});
+
+test('a session envelope is not silently decryptable with the wrong key model', async () => {
+  const key = kbGenerateSessionKey();
+  const envelope = kbEncryptWithKey('model mismatch', key);
+  await assert.rejects(() => kbDecrypt(envelope, 'some-passphrase'), (e) => e.code === 'UNSUPPORTED_ALG');
+
+  const passphraseEnvelope = await kbEncrypt('model mismatch', 'passphrase');
+  assert.throws(() => kbDecryptWithKey(passphraseEnvelope, key), (e) => e.code === 'UNSUPPORTED_ALG');
+  assert.equal(kbLooksLikeEnvelope(envelope), true, 'session envelopes are recognised by the UI');
+});
+
+test('shadowing the session key with a key of the wrong length is caught', () => {
+  const dict = kbEncryptToDict('x', kbGenerateSessionKey());
+  assert.throws(() => kbDecryptFromDict(dict, new Uint8Array(31)), /must be 32 bytes/);
+  assert.throws(() => kbEncryptToDict('x', new Uint8Array(0)), /must be 32 bytes/);
+});
+
+/* ------------------------------------------------------------------ */
+/* Zeroization (paper §III)                                            */
+/* ------------------------------------------------------------------ */
+
+test('plaintext buffers are zeroized after sealing and after opening', async () => {
+  const key = kbGenerateSessionKey();
+  const scratch = new Uint8Array(512).fill(0xaa);
+
+  kbEncryptToDict('top secret message', key, { scratch });
+  assert.equal(scratch.every((b) => b === 0), true, 'the scratch buffer is overwritten with zeros');
+
+  const dict = kbEncryptToDict('top secret message', key);
+  const readBack = new Uint8Array(512).fill(0xaa);
+  assert.equal(kbDecryptFromDict(dict, key, { scratch: readBack }), 'top secret message');
+  assert.equal(readBack.every((b) => b === 0), true);
+
+  const envScratch = new Uint8Array(64).fill(0xaa);
+  const envelope = await kbEncrypt('another secret', 'pw', { scratch: envScratch });
+  assert.equal(envScratch.every((b) => b === 0), true);
+  assert.equal(await kbDecrypt(envelope, 'pw'), 'another secret');
+
+  const keyScratch = new Uint8Array(64).fill(0xaa);
+  const sessionEnvelope = kbEncryptWithKey('third secret', key, { scratch: keyScratch });
+  assert.equal(keyScratch.every((b) => b === 0), true);
+  assert.equal(kbDecryptWithKey(sessionEnvelope, key), 'third secret');
+});
+
+test('kbZeroizeBytes handles every buffer type we hand it', () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  assert.equal(kbZeroizeBytes(bytes), true);
+  assert.deepEqual([...bytes], [0, 0, 0, 0]);
+
+  const u32 = new Uint32Array([1, 2, 3, 4]);
+  assert.equal(kbZeroizeBytes(u32), true);
+  assert.deepEqual([...u32], [0, 0, 0, 0]);
+
+  const buffer = new ArrayBuffer(8);
+  new Uint8Array(buffer).fill(7);
+  kbZeroizeBytes(buffer);
+  assert.deepEqual([...new Uint8Array(buffer)], [0, 0, 0, 0, 0, 0, 0, 0]);
+
+  // a view into a larger buffer only wipes its own window
+  const parent = new Uint8Array([9, 9, 9, 9, 9, 9]);
+  kbZeroizeBytes(parent.subarray(1, 3));
+  assert.deepEqual([...parent], [9, 0, 0, 9, 9, 9]);
+
+  assert.equal(kbZeroizeBytes(null), false);
+  assert.equal(kbZeroizeBytes('string'), false);
+});
+
+test('an over-long message is refused before any buffer is allocated', async () => {
+  const key = kbGenerateSessionKey();
+  const huge = 'x'.repeat((1 << 20) + 1);
+  assert.throws(() => kbEncryptToDict(huge, key), /1 MiB safety limit/);
+  assert.throws(() => kbEncryptWithKey(huge, key), /1 MiB safety limit/);
+  await assert.rejects(() => kbEncrypt(huge, 'pw'), /1 MiB safety limit/);
+});
+
+test('fuzz: dictionary, envelope and JSON forms all round-trip for random keys and messages', () => {
+  const rand = mulberry32(0xd1c7);
+  for (let i = 0; i < 60; i++) {
+    const key = kbGenerateSessionKey();
+    const message = randomString(rand, 120);
+    const dict = kbEncryptToDict(message, key);
+
+    assert.equal(kbDecryptFromDict(dict, key), message, `iteration ${i}`);
+    assert.equal(kbDecryptFromDict(JSON.stringify(dict), key), message, `iteration ${i} (json)`);
+    assert.equal(kbDecryptFromDict(kbEnvelopeToDict(kbEncryptWithKey(message, key)), key), message, `iteration ${i} (envelope→dict)`);
+    // a fresh nonce every time
+    assert.notEqual(kbEncryptToDict(message, key).nonce, dict.nonce);
+  }
+});

@@ -19,11 +19,19 @@ import {
   KBError,
   kbEncrypt,
   kbDecrypt,
+  kbEncryptWithKey,
+  kbDecryptWithKey,
+  kbEncryptToDict,
+  kbDecryptFromDict,
   kbParseEnvelope,
   kbDescribeEnvelope,
   kbLooksLikeEnvelope,
+  kbLooksLikeDict,
+  kbIsSessionKeyAlgorithm,
+  KB_ALGORITHM_SESSION,
   kbRandomBytes,
-  kbUtf8
+  kbUtf8,
+  kbZeroizeBytes
 } from './crypto.js';
 
 /* ------------------------------------------------------------------ */
@@ -330,6 +338,15 @@ function kbCommitViaExecCommand(el, text) {
 /* Keyboard component                                                  */
 /* ------------------------------------------------------------------ */
 
+/** 'envelope' | 'dict' | null — what the buffer appears to hold. */
+export function kbDetectPayload(text) {
+  const candidate = String(text || '').trim();
+  if (!candidate) return null;
+  if (kbLooksLikeDict(candidate)) return 'dict';
+  if (kbLooksLikeEnvelope(candidate)) return 'envelope';
+  return null;
+}
+
 const KB_HTML = `
 <div class="kb" part="kb" hidden>
   <div class="kb-bar">
@@ -392,6 +409,8 @@ const KB_HTML = `
  * @param {() => object} [options.getSettings] Current settings snapshot.
  * @param {() => Promise<string>} [options.getPassphrase]
  * @param {(p: string, remember: boolean) => Promise<void>} [options.savePassphrase]
+ * @param {() => Uint8Array|null} [options.getSessionKey] paper §III single-session key
+ * @param {() => string} [options.getSessionKeyFingerprint]
  * @param {(text: string, meta: object) => void} [options.onCommit] committed to the page
  * @param {(state: object) => void} [options.onStateChange]
  * @param {() => void} [options.onClose]
@@ -504,8 +523,10 @@ export function kbCreateKeyboard(options = {}) {
     refs.send.textContent = encrypted ? 'Encrypt & Send' : 'Send';
     // Decrypt is offered whenever the buffer holds an envelope, in either
     // mode: pasting one in to read it is a normal thing to do.
-    refs.decrypt.hidden = !(settings().autoDetectEnvelope && kbLooksLikeEnvelope(state.buffer.trim()));
-    refs.envChip.hidden = !(settings().autoDetectEnvelope && kbLooksLikeEnvelope(state.buffer.trim()));
+    const detected = settings().autoDetectEnvelope ? kbDetectPayload(state.buffer.trim()) : null;
+    refs.decrypt.hidden = !detected;
+    refs.envChip.hidden = !detected;
+    if (detected && refs.envChip) refs.envChip.textContent = detected === 'dict' ? 'kryptboard dictionary detected' : 'envelope detected';
     refs.root.dataset.mode = state.mode;
     refs.buffer.readOnly = !encrypted;
     refs.buffer.placeholder = encrypted
@@ -715,6 +736,73 @@ export function kbCreateKeyboard(options = {}) {
     if (!result.ok) setStatus('Enter was not accepted by the field.', 'warn');
   }
 
+  /** Copy of the tab's in-memory session key (paper §III), or null. */
+  function sessionKey() {
+    try {
+      const key = options.getSessionKey ? options.getSessionKey() : null;
+      return key && key.length ? key : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function sessionFingerprint() {
+    try {
+      return options.getSessionKeyFingerprint ? options.getSessionKeyFingerprint() : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
+   * Seals the buffer and returns the payload to commit.
+   *
+   * Two key models are supported:
+   *   passphrase  HKDF(/PBKDF2) from the passphrase → "v1|CHACHA20-POLY1305|…"
+   *   session     the raw single-session key (paper Algorithm 1) → either the
+   *               base64 dictionary or the equivalent envelope string.
+   *
+   * The plaintext is handed to the crypto layer in a scratch buffer that is
+   * overwritten with zeros before this function returns.
+   */
+  async function sealBuffer(text, config, passphrase) {
+    const scratch = new Uint8Array(text.length * 3);
+    try {
+      if (config.keyModel === 'session') {
+        const key = sessionKey();
+        if (config.sessionFormat === 'envelope') {
+          const envelope = kbEncryptWithKey(text, key, { aad: config.aad || '', scratch });
+          return { envelope, described: kbDescribeEnvelope(kbParseEnvelope(envelope)), label: 'session envelope', kind: 'envelope' };
+        }
+        // Algorithm 1's return value, as JSON — what the paper injects.
+        const dict = kbEncryptToDict(text, key, { aad: config.aad || '', scratch });
+        const envelope = JSON.stringify(dict);
+        return {
+          envelope,
+          described: {
+            plaintextBytes: text.length,
+            envelopeBytes: envelope.length,
+            algorithm: KB_ALGORITHM_SESSION,
+            hardened: false,
+            iterations: 0
+          },
+          label: 'session dictionary',
+          kind: 'dict'
+        };
+      }
+      const envelope = await kbEncrypt(text, passphrase, {
+        aad: config.aad || '',
+        hardened: config.hardenedKdf === true,
+        iterations: config.pbkdf2Iterations,
+        nonce: kbRandomBytes(12),
+        scratch
+      });
+      return { envelope, described: kbDescribeEnvelope(kbParseEnvelope(envelope)), label: 'envelope', kind: 'envelope' };
+    } finally {
+      kbZeroizeBytes(scratch);
+    }
+  }
+
   async function handleSend() {
     const text = state.buffer;
     if (!text.length) {
@@ -735,27 +823,31 @@ export function kbCreateKeyboard(options = {}) {
       return;
     }
 
-    const passphrase = refs.pass.value || (await resolvePassphrase());
-    if (!passphrase) {
+    const useSessionKey = config.keyModel === 'session';
+    let passphrase = '';
+    if (!useSessionKey) {
+      passphrase = refs.pass.value || (await resolvePassphrase());
+      if (!passphrase) {
+        passRowForced = true;
+        renderPassphrase();
+        setStatus('Set a passphrase first — it never leaves this machine and is never written to disk.', 'warn');
+        refs.pass.focus();
+        return;
+      }
+    } else if (!sessionKey()) {
       passRowForced = true;
       renderPassphrase();
-      setStatus('Set a passphrase first — it never leaves this machine and is never written to disk.', 'warn');
-      refs.pass.focus();
+      setStatus('This session has no key yet — generate one in the KryptBoard popup, then try again.', 'warn');
       return;
     }
 
     state.busy = true;
     renderMode();
-    setStatus(isHardened() ? 'Deriving key (PBKDF2)…' : 'Sealing…', 'info');
+    setStatus(useSessionKey ? 'Sealing with the session key…' : isHardened() ? 'Deriving key (PBKDF2)…' : 'Sealing…', 'info');
 
     try {
-      const nonce = kbRandomBytes(12);
-      const envelope = await kbEncrypt(text, passphrase, {
-        aad: config.aad || '',
-        hardened: config.hardenedKdf === true,
-        iterations: config.pbkdf2Iterations,
-        nonce
-      });
+      const payload = await sealBuffer(text, config, passphrase);
+      const envelope = payload.envelope;
 
       state.lastEnvelope = envelope;
       state.buffer = '';
@@ -763,7 +855,7 @@ export function kbCreateKeyboard(options = {}) {
       updateCount();
       state.busy = false;
 
-      const described = kbDescribeEnvelope(kbParseEnvelope(envelope));
+      const described = payload.described;
       let committed = false;
       if (config.closeAfterSend !== false) {
         // commit first, then close, so the field is still tracked
@@ -774,7 +866,7 @@ export function kbCreateKeyboard(options = {}) {
 
       if (committed) {
         setStatus(
-          `Sealed ${described.plaintextBytes} B → ${described.envelopeBytes} B envelope and committed it. Buffer wiped.`,
+          `Sealed ${described.plaintextBytes} B → ${described.envelopeBytes} B ${payload.label} and committed it. Buffer wiped.`,
           'ok'
         );
         // If we stay open, keep focus in the buffer so the next physical
@@ -783,7 +875,7 @@ export function kbCreateKeyboard(options = {}) {
       } else {
         await copyToClipboard(envelope);
         setStatus(
-          `Sealed ${described.plaintextBytes} B → ${described.envelopeBytes} B. No field to write into, so the envelope is on your clipboard.`,
+          `Sealed ${described.plaintextBytes} B → ${described.envelopeBytes} B. No field to write into, so the ${payload.label} is on your clipboard.`,
           'warn'
         );
       }
@@ -810,34 +902,62 @@ export function kbCreateKeyboard(options = {}) {
 
   async function handleDecrypt() {
     const candidate = state.buffer.trim();
-    if (!kbLooksLikeEnvelope(candidate)) {
-      setStatus('The buffer does not hold a KryptBoard envelope.', 'warn');
+    const isDict = kbLooksLikeDict(candidate);
+    const isEnvelope = !isDict && kbLooksLikeEnvelope(candidate);
+    if (!isDict && !isEnvelope) {
+      setStatus('The buffer does not hold a KryptBoard envelope or dictionary.', 'warn');
       return;
     }
-    const passphrase = refs.pass.value || (await resolvePassphrase());
-    if (!passphrase) {
-      passRowForced = true;
-      renderPassphrase();
-      setStatus('A passphrase is required to open the envelope.', 'warn');
-      refs.pass.focus();
-      return;
+
+    // Algorithm 1's dictionary is raw-key by construction, so it always needs
+    // the session key; an envelope can need either model.
+    let needsSessionKey = isDict;
+    if (isEnvelope) {
+      try {
+        needsSessionKey = kbIsSessionKeyAlgorithm(kbParseEnvelope(candidate).alg);
+      } catch (e) {
+        needsSessionKey = false;
+      }
     }
-    setStatus(isHardened() ? 'Deriving key (PBKDF2)…' : 'Verifying tag and decrypting…', 'info');
+
+    let passphrase = '';
+    if (needsSessionKey) {
+      if (!sessionKey()) {
+        setStatus('This message needs the session key — generate or import one in the KryptBoard popup.', 'warn');
+        return;
+      }
+    } else {
+      passphrase = refs.pass.value || (await resolvePassphrase());
+      if (!passphrase) {
+        passRowForced = true;
+        renderPassphrase();
+        setStatus('A passphrase is required to open the envelope.', 'warn');
+        refs.pass.focus();
+        return;
+      }
+    }
+
+    setStatus(needsSessionKey ? 'Verifying tag with the session key…' : isHardened() ? 'Deriving key (PBKDF2)…' : 'Verifying tag and decrypting…', 'info');
     try {
-      const info = kbParseEnvelope(candidate);
-      const plaintext = await kbDecrypt(candidate, passphrase, { aad: settings().aad || '' });
+      const aad = settings().aad || '';
+      const plaintext = needsSessionKey
+        ? (isDict ? kbDecryptFromDict(candidate, sessionKey(), { aad }) : kbDecryptWithKey(candidate, sessionKey(), { aad }))
+        : await kbDecrypt(candidate, passphrase, { aad });
+      const ciphertextBytes = isDict
+        ? (candidate.match(/"ciphertext":"([^"]*)"/) ? Math.floor((candidate.match(/"ciphertext":"([^"]*)"/)[1].length * 3) / 4) : 0)
+        : kbParseEnvelope(candidate).ct.length;
       state.buffer = plaintext;
       refs.buffer.value = plaintext;
       updateCount();
       setStatus(
-        `AEAD tag verified ✓ — ${plaintext.length} characters recovered from a ${info.ct.length} B ciphertext.`,
+        `AEAD tag verified ✓ — ${plaintext.length} characters recovered from a ${ciphertextBytes} B ciphertext${needsSessionKey ? ` (session key ${sessionFingerprint() || 'unknown'})` : ''}.`,
         'ok'
       );
       renderMode();
       notify();
     } catch (error) {
       const message = error instanceof KBError && error.code === 'AUTH_FAILED'
-        ? 'Tag verification failed — wrong passphrase, wrong context label, or the ciphertext was altered.'
+        ? 'Tag verification failed — wrong key, wrong context label, or the ciphertext was altered.'
         : (error && error.message) || String(error);
       setStatus(message, 'error');
     }

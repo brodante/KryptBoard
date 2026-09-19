@@ -20,9 +20,64 @@ const EXPORT_DECL_RE = /^export[ \t]+(?:(async)[ \t]+)?(function|class|const|let
 const RESIDUAL_IMPORT_RE = /(?:^|[^\w.$])import\s*[({*'"]|(?:^|[^\w.$])import\s+[\w$*{]/m;
 const RESIDUAL_EXPORT_RE = /(?:^|[^\w.$])export\s+[\w$*{]/m;
 
-/** Removes comments so prose (which may legitimately say "import") is ignored. */
-function stripComments(source) {
-  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+/**
+ * Blanks out comments *and* string/template literals, keeping newlines and
+ * length so the residual-syntax scan only ever looks at real code. Prose can
+ * legitimately contain the words "import" or "export" (a UI string here does),
+ * and this is what keeps the detector from crying wolf. Regex literals are not
+ * modelled: at worst a quote inside one produces a false positive, which fails
+ * the build loudly rather than shipping broken code.
+ */
+function stripNonCode(source) {
+  let out = '';
+  let i = 0;
+  const n = source.length;
+  const blank = (ch) => (ch === '\n' ? '\n' : ' ');
+  while (i < n) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === '/' && next === '/') {
+      while (i < n && source[i] !== '\n') {
+        out += ' ';
+        i++;
+      }
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      out += '  ';
+      i += 2;
+      while (i < n && !(source[i] === '*' && source[i + 1] === '/')) {
+        out += blank(source[i]);
+        i++;
+      }
+      out += '  ';
+      i += 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      out += ' ';
+      i++;
+      while (i < n) {
+        if (source[i] === '\\') {
+          out += '  ';
+          i += 2;
+          continue;
+        }
+        if (source[i] === quote) {
+          out += ' ';
+          i++;
+          break;
+        }
+        out += blank(source[i]);
+        i++;
+      }
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
 }
 
 export async function bundleSources({ root, entry }) {
@@ -65,7 +120,7 @@ export async function bundleSources({ root, entry }) {
     // script a content script has to be. Refuse instead of shipping it.
     // Comments are stripped first so prose cannot trip these checks, and the
     // lookbehind-ish prefix avoids matching properties such as `obj.import`.
-    const residue = stripComments(code);
+    const residue = stripNonCode(code);
     if (RESIDUAL_IMPORT_RE.test(residue)) {
       throw new Error(`Bundler: unhandled import syntax in ${id} (only named imports from relative paths are supported).`);
     }

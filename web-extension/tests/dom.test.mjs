@@ -235,10 +235,12 @@ test('the committed bundle is in sync with the sources', { skip }, async () => {
 
 test('bundle is a self-contained classic script (content scripts cannot be modules)', { skip }, async () => {
   const { code, modules } = await bundleSources({ root: ROOT, entry: 'src/content.js' });
+  // module syntax must be gone entirely (the bundler's own residue scan is
+  // string-aware, so a UI message may still *mention* the word)
   assert.equal(/^\s*(import|export)\s/m.test(code), false, 'bundle must not contain module syntax');
   assert.equal(code.includes('document.currentScript'), false);
   assert.equal(/\beval\s*\(/.test(code), false, 'no runtime eval');
-  assert.deepEqual(modules, ['src/settings.js', 'src/crypto.js', 'src/keyboard.js', 'src/wiring.js', 'src/content.js']);
+  assert.deepEqual(modules, ['src/crypto.js', 'src/settings.js', 'src/keyboard.js', 'src/wiring.js', 'src/content.js']);
   assert.ok(code.length > 20000, 'bundle looks truncated');
 });
 
@@ -899,4 +901,107 @@ test('a long message still seals and round-trips exactly', { skip }, async () =>
   await harness.waitFor(() => field.value.startsWith('v1|'));
   assert.equal(await kbDecrypt(field.value, 'pw'), message);
   assert.match(harness.shadowQuery('[data-role="status"]').textContent, /Sealed \d+ B → \d+ B envelope/);
+});
+
+/* ------------------------------------------------------------------ */
+/* Paper Algorithm 1 / 2 in the overlay (single-session key model)      */
+/* ------------------------------------------------------------------ */
+
+test('session mode seals the buffer into Algorithm 1 output', { skip }, async () => {
+  const { kbGenerateSessionKey, kbDecryptFromDict, kbDecryptWithKey, kbParseEnvelope, kbEncodeSessionKey } =
+    await import('../src/crypto.js');
+
+  for (const format of ['json', 'envelope']) {
+    const harness = await createHarness({
+      sync: { 'kryptboard:settings': { keyModel: 'session', sessionFormat: format } }
+    });
+    const key = kbGenerateSessionKey();
+    const reply = await harness.sendMessage({ type: 'kryptboard:set-session-key', key: kbEncodeSessionKey(key) });
+    assert.equal(reply.ok, true, 'the popup can hand over a session key');
+    assert.match(reply.fingerprint, /^[0-9A-F]{4}(-[0-9A-F]{4}){3}$/);
+
+    const field = harness.focusField('msg');
+    harness.pressHotkey();
+    harness.typeBuffer('session secret');
+    harness.clickKey('[data-act="send"]');
+    await harness.waitFor(() => field.value.length > 0);
+
+    if (format === 'json') {
+      // exactly the paper's dictionary
+      const dict = JSON.parse(field.value);
+      assert.deepEqual(Object.keys(dict).sort(), ['ciphertext', 'nonce', 'tag']);
+      assert.equal(dict.ciphertext.includes('session secret'), false);
+      assert.equal(kbDecryptFromDict(dict, key), 'session secret');
+      assert.match(harness.shadowQuery('[data-role="status"]').textContent, /dictionary/);
+    } else {
+      assert.match(field.value, /^v1\|CHACHA20-POLY1305\+SESSIONKEY\|/);
+      assert.equal(kbDecryptWithKey(field.value, key), 'session secret');
+      assert.equal(kbParseEnvelope(field.value).alg, 'CHACHA20-POLY1305+SESSIONKEY');
+    }
+    assert.equal(harness.shadowQuery('[data-role="buffer"]').value, '', 'the buffer is wiped either way');
+  }
+});
+
+test('session mode refuses to seal without a key, and picks one up live', { skip }, async () => {
+  const { kbGenerateSessionKey, kbEncodeSessionKey } = await import('../src/crypto.js');
+  const harness = await createHarness({ sync: { 'kryptboard:settings': { keyModel: 'session' } } });
+  const field = harness.focusField('msg');
+  harness.pressHotkey();
+  harness.typeBuffer('no key yet');
+  harness.clickKey('[data-act="send"]');
+
+  await harness.waitFor(() => /no key yet/.test(harness.shadowQuery('[data-role="status"]').textContent));
+  assert.equal(field.value, '', 'nothing was committed');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, 'no key yet', 'the buffer is preserved');
+
+  // the popup hands a key over while the overlay is open
+  await harness.sendMessage({ type: 'kryptboard:set-session-key', key: kbEncodeSessionKey(kbGenerateSessionKey()) });
+  harness.clickKey('[data-act="send"]');
+  await harness.waitFor(() => JSON.parse(field.value || '{}').ciphertext);
+  assert.match(harness.shadowQuery('[data-role="status"]').textContent, /committed/);
+});
+
+test('a dictionary pasted into the buffer decrypts with the session key', { skip }, async () => {
+  const { kbGenerateSessionKey, kbEncryptToDict, kbEncodeSessionKey } = await import('../src/crypto.js');
+  const harness = await createHarness({ session: { 'kryptboard:passphrase': 'irrelevant' } });
+  const key = kbGenerateSessionKey();
+  const dict = kbEncryptToDict('read me back', key);
+
+  // without the key the overlay explains what is missing
+  harness.typeBuffer(JSON.stringify(dict));
+  harness.clickKey('[data-act="decrypt"]');
+  await harness.waitFor(() => /session key/.test(harness.shadowQuery('[data-role="status"]').textContent));
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value.startsWith('{'), true);
+
+  // and with it, Algorithm 2 runs
+  await harness.sendMessage({ type: 'kryptboard:set-session-key', key: kbEncodeSessionKey(key) });
+  harness.clickKey('[data-act="decrypt"]');
+  await harness.waitFor(() => harness.shadowQuery('[data-role="buffer"]').value === 'read me back');
+  assert.match(harness.shadowQuery('[data-role="status"]').textContent, /tag verified/i);
+  assert.match(harness.shadowQuery('[data-role="status"]').textContent, /session key [0-9A-F]{4}/);
+});
+
+test('a dictionary is offered Decrypt and labelled, without a passphrase', { skip }, async () => {
+  const { kbGenerateSessionKey, kbEncryptToDict } = await import('../src/crypto.js');
+  const harness = await createHarness();
+  harness.typeBuffer(JSON.stringify(kbEncryptToDict('detect me', kbGenerateSessionKey())));
+
+  assert.equal(harness.shadowQuery('[data-act="decrypt"]').hidden, false);
+  assert.equal(harness.shadowQuery('[data-role="env-chip"]').hidden, false);
+  assert.match(harness.shadowQuery('[data-role="env-chip"]').textContent, /dictionary/);
+});
+
+test('a tampered dictionary is never silently accepted in the overlay', { skip }, async () => {
+  const { kbGenerateSessionKey, kbEncryptToDict, kbEncodeSessionKey, kbB64Encode, kbB64Decode } = await import('../src/crypto.js');
+  const harness = await createHarness();
+  const key = kbGenerateSessionKey();
+  const dict = kbEncryptToDict('untouched', key);
+  const tag = kbB64Decode(dict.tag);
+  tag[0] ^= 0xff;
+
+  await harness.sendMessage({ type: 'kryptboard:set-session-key', key: kbEncodeSessionKey(key) });
+  harness.typeBuffer(JSON.stringify({ ...dict, tag: kbB64Encode(tag) }));
+  harness.clickKey('[data-act="decrypt"]');
+  await harness.waitFor(() => /Tag verification failed/.test(harness.shadowQuery('[data-role="status"]').textContent));
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value.includes('untouched'), false);
 });

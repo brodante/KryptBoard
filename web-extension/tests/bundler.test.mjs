@@ -169,9 +169,11 @@ test('the real content bundle is in sync with the real sources', async () => {
   const { hash, modules } = await bundleSources({ root: ROOT, entry: 'src/content.js' });
   const written = await fs.readFile(path.join(ROOT, 'bundle/content.js'), 'utf8');
   assert.match(written, new RegExp(hash), 'bundle/content.js is stale — run npm run build');
+  // dependency order: settings.js now imports crypto.js, so crypto is emitted
+  // first and every module is defined before its importer
   assert.deepEqual(modules, [
-    'src/settings.js',
     'src/crypto.js',
+    'src/settings.js',
     'src/keyboard.js',
     'src/wiring.js',
     'src/content.js'

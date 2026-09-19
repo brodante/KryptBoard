@@ -101,6 +101,44 @@
     <label class="check"><input type="checkbox" id="set-ignorePasswordFields" /> Never target password fields</label>
     <label class="check"><input type="checkbox" id="set-autoDetectEnvelope" /> Detect envelopes and offer Decrypt</label>
     <label class="check"><input type="checkbox" id="set-showHints" /> Show shortcut hints</label>
+
+    <label class="field">Key model
+      <select id="set-keyModel">
+        <option value="passphrase">Passphrase (HKDF-SHA256, interoperable envelopes)</option>
+        <option value="session">Single-session key (paper Algorithm 1)</option>
+      </select>
+    </label>
+
+    <label class="field" id="session-format-field">Session output
+      <select id="set-sessionFormat">
+        <option value="json">Base64 dictionary {nonce, ciphertext, tag}</option>
+        <option value="envelope">v1 envelope string</option>
+      </select>
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>Session key</h2>
+    <p class="note">
+      The paper's proof-of-concept encrypts with a single-session key that this extension generates and
+      keeps locally. Share the key with the person you are writing to (a different channel is safest);
+      their KryptBoard — or any implementation of the paper's Algorithm 2 — can then read your messages.
+      The key never leaves the browser and is never written to disk.
+    </p>
+    <div class="row">
+      <span id="session-key-state" class="status">No session key</span>
+    </div>
+    <div class="row">
+      <button id="session-generate" class="primary" type="button">Generate key</button>
+      <button id="session-copy" type="button">Copy sharing string</button>
+      <button id="session-clear" type="button">Forget key</button>
+    </div>
+    <label class="field">Import a key
+      <input id="session-import" type="text" placeholder="kbk1.… (from the other side)" autocomplete="off" spellcheck="false" />
+    </label>
+    <p class="note" id="session-key-hint">
+      Fingerprint: <span class="muted">none yet</span>
+    </p>
   </section>
 
   <section class="card">

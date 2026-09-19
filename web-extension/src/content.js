@@ -7,6 +7,7 @@
  */
 
 import { kbCreateSettingsStore, kbCreatePassphraseVault, KB_SETTINGS_KEY } from './settings.js';
+import { kbKeyFingerprint, kbNormalizeKeyBytes, kbZeroizeBytes } from './crypto.js';
 import { kbWireKeyboard } from './wiring.js';
 
 (function install() {
@@ -21,6 +22,15 @@ import { kbWireKeyboard } from './wiring.js';
   const store = kbCreateSettingsStore(syncArea);
   const vault = kbCreatePassphraseVault({ sessionArea });
 
+  /**
+   * The paper's single-session key (Algorithm 1's `key_bytes`).
+   *
+   * It is handed over by the popup over the message API and kept in this
+   * content script's closure only — pages cannot reach it, and it is wiped
+   * (overwritten with zeros) the moment it is replaced or cleared.
+   */
+  let sessionKey = null;
+
   const ready = (async () => {
     await store.load();
     await vault.load();
@@ -33,6 +43,8 @@ import { kbWireKeyboard } from './wiring.js';
       subscribeSettings: (cb) => store.subscribe(cb),
       getPassphrase: () => vault.get(),
       savePassphrase: (passphrase, remember) => vault.set(passphrase, remember),
+      getSessionKey: () => (sessionKey ? sessionKey.slice() : null),
+      getSessionKeyFingerprint: () => (sessionKey ? kbKeyFingerprint(sessionKey) : ''),
       cssHref: hasChrome && chrome.runtime && chrome.runtime.getURL
         ? chrome.runtime.getURL('src/keyboard.css')
         : null
@@ -51,6 +63,10 @@ import { kbWireKeyboard } from './wiring.js';
       target: wired.getTarget() ? (wired.getTarget().tagName || '').toLowerCase() : null,
       hasPassphrase: vault.has(),
       passphraseRemembered: vault.isRemembered(),
+      hasSessionKey: sessionKey !== null,
+      sessionKeyFingerprint: sessionKey ? kbKeyFingerprint(sessionKey) : '',
+      keyModel: store.get().keyModel,
+      sessionFormat: store.get().sessionFormat,
       hotkey: store.get().hotkey,
       enabled: store.get().enabled
     };
@@ -87,6 +103,25 @@ import { kbWireKeyboard } from './wiring.js';
           case 'kryptboard:clear-passphrase':
             await vault.clear();
             wired.keyboard.setPassphrase('');
+            sendResponse({ ok: true });
+            break;
+          case 'kryptboard:set-session-key': {
+            try {
+              const next = kbNormalizeKeyBytes(message.key, 'session key');
+              // wipe the previous key before replacing it
+              kbZeroizeBytes(sessionKey);
+              sessionKey = next;
+              wired.keyboard.refreshSettings();
+              sendResponse({ ok: true, fingerprint: kbKeyFingerprint(sessionKey) });
+            } catch (error) {
+              sendResponse({ ok: false, error: (error && error.message) || 'invalid session key' });
+            }
+            break;
+          }
+          case 'kryptboard:clear-session-key':
+            kbZeroizeBytes(sessionKey);
+            sessionKey = null;
+            wired.keyboard.refreshSettings();
             sendResponse({ ok: true });
             break;
           default:

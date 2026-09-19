@@ -64,7 +64,8 @@ test('defaults are frozen and cover exactly the documented settings', () => {
   assert.deepEqual(Object.keys(KB_DEFAULT_SETTINGS).sort(), [
     'aad', 'autoDetectEnvelope', 'clearBufferOnClose', 'closeAfterSend', 'commitStyle',
     'enabled', 'hardenedKdf', 'hideOnEscape', 'hotkey', 'ignorePasswordFields',
-    'keepOpenAfterCopy', 'pbkdf2Iterations', 'showHints', 'startMode', 'theme'
+    'keepOpenAfterCopy', 'keyModel', 'pbkdf2Iterations', 'sessionFormat', 'showHints',
+    'startMode', 'theme'
   ]);
   // the security-relevant defaults must not silently flip
   assert.equal(KB_DEFAULT_SETTINGS.ignorePasswordFields, true);
@@ -259,8 +260,15 @@ test('the vault restores a remembered passphrase, but never writes it to sync se
   await store.save({ theme: 'light' });
   const synced = flatten([...sync.map.entries()]);
   assert.equal(synced.includes('remembered-secret'), false, 'the passphrase must never reach sync storage');
-  assert.equal(synced.includes('passphrase'), false, 'nor may a passphrase field exist in settings');
-  assert.equal(Object.keys(JSON.parse(JSON.stringify(sync.map.get(KB_SETTINGS_KEY)))).includes('passphrase'), false);
+  // No secret material may live in settings: no passphrase/secret field, and
+  // no value that looks like key material (the key *model* is just a name).
+  const settings = JSON.parse(JSON.stringify(sync.map.get(KB_SETTINGS_KEY)));
+  for (const name of Object.keys(settings)) {
+    assert.equal(/passphrase|secret|keybytes|sessionkey/i.test(name), false, `settings must not carry "${name}"`);
+  }
+  for (const value of Object.values(settings)) {
+    assert.equal(typeof value === 'string' && /^kbk1\./.test(value), false, 'a session key must never reach sync storage');
+  }
 });
 
 test('a vault with no session storage still works in memory only', async () => {

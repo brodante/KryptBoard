@@ -276,3 +276,75 @@ test('a passphrase written from another tab reaches the overlay', { skip }, asyn
   const { kbDecrypt } = await import('../src/crypto.js');
   assert.equal(await kbDecrypt(harness.document.getElementById('msg').value, 'from-another-tab'), 'h');
 });
+
+/* ------------------------------------------------------------------ */
+/* Single-session key (paper §III)                                     */
+/* ------------------------------------------------------------------ */
+
+test('the session key arrives from the popup, is reported, and can be wiped', { skip }, async () => {
+  const { kbGenerateSessionKey, kbEncodeSessionKey, kbKeyFingerprint } = await import('../src/crypto.js');
+  const harness = await createHarness();
+
+  assert.equal((await harness.send({ type: 'kryptboard:ping' })).hasSessionKey, false);
+
+  const key = kbGenerateSessionKey();
+  const shared = kbEncodeSessionKey(key);
+  const accepted = await harness.send({ type: 'kryptboard:set-session-key', key: shared });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.fingerprint, kbKeyFingerprint(key));
+
+  const withKey = await harness.send({ type: 'kryptboard:ping' });
+  assert.equal(withKey.hasSessionKey, true);
+  assert.equal(withKey.sessionKeyFingerprint, kbKeyFingerprint(key));
+  assert.equal(withKey.keyModel, 'passphrase', 'the ping reports the key model too');
+
+  assert.equal((await harness.send({ type: 'kryptboard:clear-session-key' })).ok, true);
+  const cleared = await harness.send({ type: 'kryptboard:ping' });
+  assert.equal(cleared.hasSessionKey, false);
+  assert.equal(cleared.sessionKeyFingerprint, '');
+});
+
+test('a bad session key is refused with a reason and changes nothing', { skip }, async () => {
+  const { kbGenerateSessionKey, kbEncodeSessionKey, kbKeyFingerprint } = await import('../src/crypto.js');
+  const harness = await createHarness();
+  const key = kbGenerateSessionKey();
+  await harness.send({ type: 'kryptboard:set-session-key', key: kbEncodeSessionKey(key) });
+
+  for (const bad of ['', 'not-a-key', 'kbk1.zzzz', 'AAAA']) {
+    const reply = await harness.send({ type: 'kryptboard:set-session-key', key: bad });
+    assert.equal(reply.ok, false, `"${bad}" must be rejected`);
+    assert.ok(reply.error, 'the popup gets an explanation');
+  }
+
+  // the original key survived every rejected attempt
+  const ping = await harness.send({ type: 'kryptboard:ping' });
+  assert.equal(ping.hasSessionKey, true);
+  assert.equal(ping.sessionKeyFingerprint, kbKeyFingerprint(key));
+});
+
+test('replacing the session key swaps the fingerprint immediately', { skip }, async () => {
+  const { kbGenerateSessionKey, kbEncodeSessionKey, kbKeyFingerprint } = await import('../src/crypto.js');
+  const harness = await createHarness();
+  const first = kbGenerateSessionKey();
+  const second = kbGenerateSessionKey();
+
+  await harness.send({ type: 'kryptboard:set-session-key', key: kbEncodeSessionKey(first) });
+  assert.equal((await harness.send({ type: 'kryptboard:ping' })).sessionKeyFingerprint, kbKeyFingerprint(first));
+  await harness.send({ type: 'kryptboard:set-session-key', key: kbEncodeSessionKey(second) });
+
+  const ping = await harness.send({ type: 'kryptboard:ping' });
+  assert.equal(ping.sessionKeyFingerprint, kbKeyFingerprint(second));
+  assert.notEqual(ping.sessionKeyFingerprint, kbKeyFingerprint(first));
+});
+
+test('the session key is never written to extension storage', { skip }, async () => {
+  const { kbGenerateSessionKey, kbEncodeSessionKey } = await import('../src/crypto.js');
+  const harness = await createHarness();
+  await harness.send({ type: 'kryptboard:set-session-key', key: kbEncodeSessionKey(kbGenerateSessionKey()) });
+
+  const written = [...harness.chromeStub.maps.sync.values(), ...harness.chromeStub.maps.session.values()];
+  for (const value of written) {
+    assert.equal(typeof value === 'string' && value.startsWith('kbk1.'), false, 'the key must stay in memory');
+  }
+  assert.equal(harness.chromeStub.maps.sync.size + harness.chromeStub.maps.session.size, 0, 'nothing was persisted at all');
+});
