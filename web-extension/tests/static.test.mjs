@@ -268,13 +268,25 @@ test('the GitHub Pages workflow publishes the preview, the demo and the zip', as
   // the stale-bundle gate keeps Pages from ever publishing an out-of-date build
   assert.match(workflow, /scripts\/build\.mjs --check/);
 
-  // a repository without Pages enabled gets an instruction, not a cryptic
-  // "Resource not accessible by integration"
+  // a repository whose Pages setup cannot accept this deploy gets an
+  // instruction, not a cryptic "Resource not accessible by integration"
   assert.match(workflow, /continue-on-error: true/, 'configure-pages must not hard-fail before the explanation');
-  assert.match(workflow, /if: steps\.pages\.outcome != 'success'/);
-  assert.match(workflow, /::error title=GitHub Pages is not enabled on this repository::/);
+  assert.match(workflow, /- name: Check the Pages setup/, 'the preflight must always run, not only on failure');
+  assert.match(workflow, /::error title=GitHub Pages is not enabled::/);
+  assert.match(workflow, /build_type/);
+  assert.match(workflow, /build_type" != "workflow"/, 'deploy-from-a-branch must be diagnosed too');
+  assert.match(workflow, /::warning title=Could not read the Pages settings::/, 'an unreadable setting is not a failure');
   assert.match(workflow, /settings\/pages/);
   assert.match(workflow, /Re-run all jobs/);
+  assert.match(workflow, /GITHUB_STEP_SUMMARY/, 'the fix is written to the run summary as well');
+  assert.match(workflow, /\|\| build_type=''/, 'pipefail + grep with no match must not abort the explanation');
+
+  // the verifiable checks run before the Pages inspection, so a misconfigured
+  // Pages setup never masks a stale bundle or a broken build
+  const order = ['Fail if the committed bundle is stale', 'Build the installable extension zip', 'Check the Pages setup', 'Stage the site'];
+  const positions = order.map((name) => workflow.indexOf(`- name: ${name}`));
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'the steps are out of order');
+  assert.ok(positions.every((p) => p >= 0), 'a step is missing');
 
   // the download button on the landing page points at the published zip
   const landing = await read('index.html');

@@ -406,7 +406,7 @@ end in the passphrase model and **~0.07 ms** of pure AEAD in the paper's session
 ## Tests
 
 ```bash
-npm test                   # everything: 186 tests across eleven suites
+npm test                   # everything: 190 tests across twelve suites
 npm run test:crypto        # 44 tests: primitives, envelope + dictionary, interop vectors, fuzzing
 npm run test:dom           # 43 tests: the built bundle inside a simulated page
 npm run bench              # measured throughput / overhead / scaling
@@ -424,7 +424,8 @@ npm run build -- --check   # fail if bundle/content.js is stale
 | `bench.test.mjs` | 3 | performance guards: a 500-character seal stays far below a frame, per-byte cost stays linear from 1 KiB to 64 KiB |
 | `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
 | `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |
-| `static.test.mjs` | 16 | packaging, permissions, no-network (author links excluded from the asset scan), markup/script cross-checks, the `[hidden]` CSS guard, the author watermark and paper DOI on every surface, `CITATION.cff`, the GitHub Pages workflow (permissions, staged files, stale-bundle gate) |
+| `static.test.mjs` | 16 | packaging, permissions, no-network (author links excluded from the asset scan), markup/script cross-checks, the `[hidden]` CSS guard, the author watermark and paper DOI on every surface, `CITATION.cff`, the GitHub Pages workflow (permissions, staged files, step order, stale-bundle gate) |
+| `pages-workflow.test.mjs` | 4 | the Pages preflight step's shell script, extracted from the YAML and executed against a fake Pages API: not enabled (404), set to deploy from a branch (`build_type: legacy`), set to GitHub Actions, and a token that cannot read the setting — each asserted on its message, not just its exit code |
 | `demo.test.mjs` | 6 | the demo page loads the real modules and round-trips, including the paper's session-key panel (generate, fingerprint, Algorithm 1 dictionary, Algorithm 2 decryption, the wipe on *Forget*) and the ⌨ Capture toggle driving a physical keystroke into the buffer |
 
 What is actually verified, not merely claimed:
@@ -470,8 +471,10 @@ The same folder is a static site — no server code, no build step at runtime �
 can publish it as-is. `.github/workflows/pages.yml` does exactly that on every push to `main`:
 
 1. **Turn Pages on once:** repository → *Settings* → *Pages* → **Source: GitHub Actions**.
-   (The workflow passes `enablement: true` to `actions/configure-pages`, so it will also offer
-   to do this for you on the first run.)
+   This is the one step a workflow cannot do for you on its own: choosing the source needs
+   repository-admin rights, so it has to be a human (or a token with admin scope). The workflow
+   passes `enablement: true` to `actions/configure-pages` and will try, but if the token is not
+   allowed it stops with a link to that exact settings page instead of an opaque API error.
 2. **Push to `main`** (or run the workflow from the *Actions* tab → *Deploy demo to GitHub
    Pages* → *Run workflow*).
 3. The site appears at **`https://<owner>.github.io/<repo>/`** — for this repository,
@@ -484,6 +487,23 @@ tooling, `node_modules` and the README are never uploaded.
 
 The run refuses to publish a stale bundle (`node scripts/build.mjs --check`), so the live demo
 can never be older than the sources it claims to ship.
+
+### When it fails, it says why
+
+Pages has exactly two repository-level settings that can stop a workflow deploy, and the
+*Check the Pages setup* step inspects both before anything is uploaded:
+
+| What the repository says | What the run does |
+|---|---|
+| Pages has never been enabled (`404`) | fails with *“GitHub Pages is not enabled”* and links `…/settings/pages` |
+| Pages deploys from a branch, i.e. `build_type: legacy` | fails naming the `build_type`, and says to change **Source → GitHub Actions** |
+| `build_type: workflow` | continues |
+| the token cannot read the setting (`403`) | warns and continues — an unreadable setting is not proof of a misconfiguration |
+
+Both failures also write the full fix into the run's **summary** page, so the explanation is
+visible without digging into the logs. The step's shell is exercised by
+`tests/pages-workflow.test.mjs` against all four states — including the `set -o pipefail` +
+`grep` trap that would otherwise abort the script before it could explain itself.
 
 Everything on the page uses relative links, so it works unchanged from the `/KryptBoard/`
 sub-path. A custom domain works too: point it at the Pages site and add a `CNAME` file to the

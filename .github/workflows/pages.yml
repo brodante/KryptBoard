@@ -2,12 +2,13 @@
 #
 # The site is the `web-extension/` folder itself: index.html, the demo page and
 # the real `src/` modules (the demo imports them over HTTP instead of shipping
-# them bundled). Nothing here is built server-side, so Pages can serve it as-is
-# — except that the installable extension zip is produced during the run and
+# them bundled). Nothing is built server-side, so Pages can serve it as-is —
+# except that the installable extension zip is produced during the run and
 # published alongside the page.
 #
 # One-time setup, in the repository: Settings → Pages → Source: "GitHub Actions".
-# (The `enablement: true` input below asks GitHub to set that for us.)
+# The "Check the Pages setup" step below verifies exactly that and tells you
+# which setting is wrong if the deploy cannot proceed.
 #
 # The published URL is https://<owner>.github.io/<repo>/ — everything on the
 # page uses relative links, so it works from that sub-path unchanged.
@@ -45,37 +46,8 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Configure Pages
-        id: pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-        # Enabling Pages needs repository-admin rights, which the workflow token
-        # does not have on a repository where Pages was never switched on. When
-        # that happens the step below turns it into an instruction instead of a
-        # cryptic "Resource not accessible by integration".
-        continue-on-error: true
-
-      - name: Check that Pages is enabled
-        if: steps.pages.outcome != 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          status=$(curl -s -o /tmp/pages.json -w '%{http_code}' \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pages")
-          if [ "$status" = "200" ]; then
-            echo "Pages is enabled — continuing."
-            exit 0
-          fi
-          echo "::error title=GitHub Pages is not enabled on this repository::$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/settings/pages"
-          echo "Set Source to \"GitHub Actions\" there, then re-run this workflow:"
-          echo "  Actions → Deploy demo to GitHub Pages → Re-run all jobs"
-          echo "(or push any change under web-extension/)."
-          exit 1
-
+      # Everything that can be verified without touching Pages runs first, so a
+      # misconfigured Pages setup never hides a stale bundle or a broken build.
       - name: Fail if the committed bundle is stale
         working-directory: web-extension
         run: node scripts/build.mjs --check
@@ -83,6 +55,75 @@ jobs:
       - name: Build the installable extension zip
         working-directory: web-extension
         run: node scripts/build.mjs --zip
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+        # Enabling Pages (or switching its source) needs repository-admin rights,
+        # which the workflow token does not have. Tolerate that here and let the
+        # next step say precisely which setting has to change.
+        continue-on-error: true
+
+      - name: Check the Pages setup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SETTINGS="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/settings/pages"
+
+          code=$(curl -s -o /tmp/pages.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pages" || echo 000)
+
+          # `build_type` is what the deploy action needs to be "workflow".
+          # The `|| build_type=''` matters: under `set -o pipefail` a grep with
+          # no match would otherwise abort the script *before* it can explain
+          # itself (which is exactly what happens on a 404 or 403 body).
+          build_type=$(grep -o '"build_type"[[:space:]]*:[[:space:]]*"[^"]*"' /tmp/pages.json 2>/dev/null \
+            | sed 's/.*"\([^"]*\)"$/\1/' | head -1) || build_type=''
+          echo "GET /pages → HTTP $code · build_type=${build_type:-unknown} · configure-pages=${{ steps.pages.outcome }}"
+
+          if [ "$code" = "404" ]; then
+            {
+              echo "### GitHub Pages is not enabled in this repository"
+              echo
+              echo "Open $SETTINGS, set **Source → GitHub Actions**, then re-run this workflow"
+              echo "(Actions → *Deploy demo to GitHub Pages* → **Re-run all jobs**)."
+              echo
+              echo "The site will then appear at ${{ github.server_url }}/${{ github.repository }}/deployments —"
+              echo "and at \`https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=GitHub Pages is not enabled::$SETTINGS — set Source to \"GitHub Actions\", then re-run this workflow."
+            exit 1
+          fi
+
+          if [ "$code" != "200" ]; then
+            echo "::warning title=Could not read the Pages settings::HTTP $code — continuing; the deploy step will report the real problem."
+            exit 0
+          fi
+
+          if [ -n "$build_type" ] && [ "$build_type" != "workflow" ]; then
+            {
+              echo "### Pages is deploying from a branch, not from Actions"
+              echo
+              echo "The repository has Pages configured with \`build_type: $build_type\`."
+              echo "This workflow publishes a *workflow* artifact, so the two cannot be mixed."
+              echo
+              echo "Open $SETTINGS, change **Source → GitHub Actions**, then re-run this workflow"
+              echo "(Actions → *Deploy demo to GitHub Pages* → **Re-run all jobs**)."
+              echo
+              echo "Nothing else has to change: the folder published by this workflow is"
+              echo "\`web-extension/\` (index.html, demo/, src/, bundle/, assets/, manifest.json and the zip),"
+              echo "which is staged here and uploaded as the Pages artifact."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Pages is set to \"$build_type\", not \"GitHub Actions\"::$SETTINGS — change Source to \"GitHub Actions\", then re-run this workflow."
+            exit 1
+          fi
+
+          echo "Pages is configured for GitHub Actions deployments."
 
       - name: Stage the site
         run: |
