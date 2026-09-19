@@ -133,6 +133,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .tab.is-active { background: var(--accent); color: #fff; }
 
+/* the toolbar's Plain / Encrypt switch */
+.mode-switch.is-active {
+  border-color: var(--accent);
+  color: #fff;
+  background: linear-gradient(180deg, var(--accent), #6354e0);
+}
+
 label, .field {
   display: block;
   margin: 8px 0 0;

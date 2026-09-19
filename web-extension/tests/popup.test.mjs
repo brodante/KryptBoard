@@ -72,6 +72,7 @@ async function bootPopup(options = {}) {
       async sendMessage(tabId, message) {
         messages.push({ tabId, message });
         if (options.sendMessageThrows) throw new Error('no content script');
+        if (options.sendMessage) return options.sendMessage(tabId, message);
         if (message.type === 'kryptboard:ping') {
           return { ok: true, open: false, mode: 'encrypted', hotkey: 'Ctrl+Shift+K', hasTarget: true, target: 'textarea', hasPassphrase: false };
         }
@@ -321,4 +322,49 @@ test('the session-output field only shows for the session key model', { skip }, 
   $('set-keyModel').dispatchEvent(new popup.window.Event('change', { bubbles: true }));
   await waitFor(() => $('session-format-field').hidden === false);
   await waitFor(() => popup.sync.get('kryptboard:settings')?.keyModel === 'session');
+});
+
+test('the toolbar Plain/Encrypt switch reflects and changes the page mode', { skip }, async () => {
+  const popup = await bootPopup({
+    tag: 'mode-switch',
+    sendMessage: async (tabId, message) => {
+      if (message.type === 'kryptboard:ping') {
+        return { ok: true, open: true, mode: 'encrypted', hotkey: 'Ctrl+Shift+K', hasTarget: true, target: 'textarea', hasPassphrase: true };
+      }
+      if (message.type === 'kryptboard:set-mode') return { ok: true, mode: message.mode };
+      return { ok: true };
+    }
+  });
+  const $ = (id) => popup.document.getElementById(id);
+  // the switch is rendered just after the status text, so wait on the switch
+  await waitFor(() => $('mode-encrypt').classList.contains('is-active'));
+
+  // reflects the page's live mode
+  assert.equal($('mode-plain').classList.contains('is-active'), false);
+  assert.equal($('mode-plain').getAttribute('aria-pressed'), 'false');
+  assert.equal($('mode-encrypt').getAttribute('aria-pressed'), 'true');
+
+  popup.messages.length = 0;
+  $('mode-plain').click();
+  await waitFor(() => $('mode-plain').classList.contains('is-active'));
+  assert.equal($('mode-encrypt').classList.contains('is-active'), false);
+  assert.equal(popup.messages.find((m) => m.message.type === 'kryptboard:set-mode').message.mode, 'plain');
+  assert.match($('page-status').textContent, /Plain mode/);
+
+  // and the new mode becomes the default for the next page
+  await waitFor(() => popup.sync.get('kryptboard:settings')?.startMode === 'plain');
+
+  $('mode-encrypt').click();
+  await waitFor(() => $('mode-encrypt').classList.contains('is-active'));
+  assert.match($('page-status').textContent, /Encrypt mode/);
+});
+
+test('the switch explains itself when the page cannot be reached', { skip }, async () => {
+  const popup = await bootPopup({ tag: 'mode-switch-blocked', sendMessageThrows: true });
+  const $ = (id) => popup.document.getElementById(id);
+  await waitFor(() => /Cannot reach|allow extensions/.test($('page-status').textContent));
+
+  $('mode-plain').click();
+  await waitFor(() => /does not allow extensions/.test($('page-status').textContent));
+  assert.equal($('mode-plain').classList.contains('is-active'), false, 'the UI does not claim a mode it could not set');
 });

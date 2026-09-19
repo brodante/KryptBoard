@@ -100,6 +100,14 @@ import { kbWireKeyboard } from './wiring.js';
             sendResponse({ ok: true });
             break;
           }
+          case 'kryptboard:set-mode': {
+            // the toolbar's Plain/Encrypt switch drives the live overlay
+            const mode = message.mode === 'plain' ? 'plain' : 'encrypted';
+            wired.keyboard.setMode(mode);
+            await store.save({ startMode: mode });
+            sendResponse({ ok: true, mode });
+            break;
+          }
           case 'kryptboard:clear-passphrase':
             await vault.clear();
             wired.keyboard.setPassphrase('');

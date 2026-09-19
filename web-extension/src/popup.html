@@ -23,6 +23,14 @@
       <span class="status" id="page-status">Checking this page…</span>
     </div>
     <div class="row buttons">
+      <button id="mode-plain" type="button" class="mode-switch">Plain mode</button>
+      <button id="mode-encrypt" type="button" class="mode-switch">Encrypt mode</button>
+    </div>
+    <p class="note">
+      The switch lives in the toolbar and stays in sync with the keypad: in <em>Encrypt mode</em>
+      keystrokes are buffered by the extension and only the sealed ciphertext reaches the page.
+    </p>
+    <div class="row buttons">
       <button id="toggle" class="primary" type="button">Open keyboard</button>
       <button id="clear-pass" type="button">Clear passphrase</button>
     </div>

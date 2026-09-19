@@ -151,6 +151,15 @@ machine.
 | Nothing is transmitted | The manifest requests only `storage`, declares no host permissions, and the source contains no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or `eval` — enforced by tests that read the shipped sources. The popup shows a “0 network calls” badge. |
 | Keystrokes are not replayable across contexts | The optional context label is mixed into both the KDF `info` and the AEAD associated data. |
 
+**Residual risks the paper lists, and where we stand**
+
+| Paper's caveat | This implementation |
+|---|---|
+| A fully compromised browser or OS can intercept keystrokes before the extension sees them | Out of scope, as in the paper. Pre-send encryption defends against page-level and extension-level threats, not a hostile kernel or a compromised browser binary. |
+| A malicious extension installed *before* KryptBoard could capture input | Same scope limit. Note the asymmetry: with Encrypt mode the only thing a page-reading extension receives is ciphertext, but it can still read the *overlay's* on-screen key labels and timing. |
+| The user may forget to switch to Encrypt mode | Mitigated, not solved: the mode is shown in the toolbar switch, in the overlay's header chip and in its colour, and `Encrypt mode` is the default (`startMode`). |
+| Traffic analysis — timing and message length stay visible | True here too. The envelope's length reveals the plaintext's length (base64 expansion ≈ 1.37×) and typing rhythm is unchanged. Padding is future work. |
+
 **Two operating modes, two levels of isolation**
 
 1. **In-page overlay** (default). Convenient: it works in any field on any site. The
@@ -257,7 +266,7 @@ lives and how faithful the implementation is.
 
 | Paper requirement | Where it lives | Status |
 |---|---|---|
-| Two modes, Plain and Encrypt, toggled from a persistent browser-toolbar UI | `src/keyboard.js` (`setMode`), `src/popup.html` / `popup.js` (*Key model*, *Open keyboard*, mode chips inside the overlay) | ✅ implemented — the overlay shows the mode on every surface, and the popup toggles it from the toolbar |
+| Two modes, Plain and Encrypt, toggled from a persistent browser-toolbar UI | `src/popup.html` / `popup.js` — the *Plain mode* / *Encrypt mode* switch that drives the live overlay over the message API (`kryptboard:set-mode`); mode chips inside the overlay keep it visible while typing | ✅ implemented — the switch reflects the page's current mode, changes it live, and stores it as the default for the next page |
 | Keystrokes held in an isolated buffer, encrypted as one message on demand | `src/keyboard.js` — encrypted mode buffers; `Encrypt & Send` seals | ✅ implemented |
 | **Algorithm 1** — 12-byte random nonce, `ChaCha20-Poly1305(key_bytes, nonce).encrypt_and_digest(msg)`, result `{nonce, ciphertext, tag}` base64-encoded | `kbEncryptToDict` in `src/crypto.js` | ✅ implemented byte-for-byte: standard base64 **with** padding, exactly the fields the paper names |
 | **Algorithm 2** — decode the three base64 components, `decrypt_and_verify`, fail on a bad tag | `kbDecryptFromDict` | ✅ implemented; a failed tag raises `AUTH_FAILED` (the paper's `ValueError`) |
@@ -360,7 +369,7 @@ browser), so the honest numbers are these:
 ## Tests
 
 ```bash
-npm test                   # everything: 165 tests across eleven suites
+npm test                   # everything: 168 tests across eleven suites
 npm run test:crypto        # 44 tests: primitives, envelope + dictionary, interop vectors, fuzzing
 npm run test:dom           # 37 tests: the built bundle inside a simulated page
 npm run bench              # measured throughput / overhead / scaling
@@ -373,8 +382,8 @@ npm run build -- --check   # fail if bundle/content.js is stale
 | `dom.test.mjs` | 37 | the *built* bundle in jsdom driven like a user (hotkey → keys → Encrypt & Send), the paper's session-key sealing (dictionary and envelope output, refusal without a key, Algorithm-2 decryption of a pasted dictionary), plus the editing primitives: maxlength, selection replacement, `beforeinput` cancellation, framework events, caret handling, clipboard copy/paste, shift lock, themes |
 | `settings.test.mjs` | 16 | frozen defaults, hostile input (prototype pollution, garbage types), hotkey parsing/matching, the store's load/save/reset/subscribe paths, the passphrase vault's memory-vs-remembered rules, and a change landing mid-load |
 | `wiring.test.mjs` | 13 | exact hotkey matching (near-miss combos, auto-repeat, disabled), target rules (readonly, `contenteditable`, buttons, selects), password exclusion and its opt-out, focus inside the overlay, teardown |
-| `content.test.mjs` | 12 | double injection, foreign/unknown messages, the popup message API, session-key hand-over and wiping, replies that wait for storage to load, and settings/passphrase pushes from other tabs |
-| `popup.test.mjs` | 11 | popup boot, the isolated composer (passphrase **and** session-key models, seal, verify, wrong passphrase, AAD, work factor), session-key generate/import/copy/forget, settings persistence, tabs, blocked pages, clipboard fallback |
+| `content.test.mjs` | 13 | double injection, foreign/unknown messages, the popup message API (including the toolbar's mode switch), session-key hand-over and wiping, replies that wait for storage to load, and settings/passphrase pushes from other tabs |
+| `popup.test.mjs` | 13 | popup boot, the isolated composer (passphrase **and** session-key models, seal, verify, wrong passphrase, AAD, work factor), session-key generate/import/copy/forget, the toolbar Plain/Encrypt switch, settings persistence, tabs, blocked pages, clipboard fallback |
 | `bench.test.mjs` | 3 | performance guards: a 500-character seal stays far below a frame, per-byte cost stays linear from 1 KiB to 64 KiB |
 | `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
 | `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |

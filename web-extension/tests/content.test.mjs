@@ -348,3 +348,30 @@ test('the session key is never written to extension storage', { skip }, async ()
   }
   assert.equal(harness.chromeStub.maps.sync.size + harness.chromeStub.maps.session.size, 0, 'nothing was persisted at all');
 });
+
+test('the toolbar switch drives the live mode and sticks for the next page', { skip }, async () => {
+  const harness = await createHarness();
+  harness.document.getElementById('msg').dispatchEvent(new harness.window.FocusEvent('focusin', { bubbles: true }));
+
+  const toPlain = await harness.send({ type: 'kryptboard:set-mode', mode: 'plain' });
+  assert.deepEqual({ ok: toPlain.ok, mode: toPlain.mode }, { ok: true, mode: 'plain' });
+  assert.equal((await harness.send({ type: 'kryptboard:ping' })).mode, 'plain');
+
+  // plain mode commits keystrokes straight into the field
+  openHotkey(harness);
+  await harness.waitFor(() => harness.overlayOpen());
+  const shadow = harness.shadowRoots[0].root;
+  shadow.querySelector('[data-act="char"][data-v="p"]').click();
+  assert.equal(harness.document.getElementById('msg').value, 'p');
+
+  const toEncrypted = await harness.send({ type: 'kryptboard:set-mode', mode: 'encrypted' });
+  assert.equal(toEncrypted.mode, 'encrypted');
+  assert.equal((await harness.send({ type: 'kryptboard:ping' })).mode, 'encrypted');
+
+  // the choice is remembered as the default for the next page
+  assert.equal(harness.chromeStub.maps.sync.get('kryptboard:settings').startMode, 'encrypted');
+
+  // an unknown mode value falls back to encrypted rather than doing nothing
+  const weird = await harness.send({ type: 'kryptboard:set-mode', mode: 'nonsense' });
+  assert.equal(weird.mode, 'encrypted');
+});

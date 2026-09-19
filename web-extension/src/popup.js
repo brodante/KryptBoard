@@ -125,6 +125,7 @@ async function refresh() {
         state.hasPassphrase ? 'Passphrase: in memory' : 'Passphrase: not set'
       ].join(' · ')
     );
+    renderModeSwitch(state.mode || settings.startMode);
     $('toggle').textContent = state.open ? 'Hide keyboard' : (settings.startMode === 'plain' ? 'Open keyboard (plain)' : 'Open keyboard (encrypted)');
   } catch (error) {
     setPageStatus(
@@ -167,6 +168,49 @@ async function onClearPassphrase() {
 // Extension pages may use storage.session directly; the content script
 // receives the key over the message API instead of reading storage itself.
 const sessionVault = kbCreateSessionKeyVault({ sessionArea: chrome.storage && chrome.storage.session });
+
+/* ------------------------------------------------------------------ */
+/* the toolbar's Plain / Encrypt switch                                */
+/* ------------------------------------------------------------------ */
+
+function renderModeSwitch(mode) {
+  const plain = $('mode-plain');
+  const encrypt = $('mode-encrypt');
+  if (!plain || !encrypt) return;
+  plain.classList.toggle('is-active', mode === 'plain');
+  encrypt.classList.toggle('is-active', mode !== 'plain');
+  plain.setAttribute('aria-pressed', String(mode === 'plain'));
+  encrypt.setAttribute('aria-pressed', String(mode !== 'plain'));
+}
+
+async function setMode(mode) {
+  const tab = await activeTab();
+  if (!tab || !tab.id) {
+    setPageStatus('No active tab to switch.', 'blocked');
+    return;
+  }
+  try {
+    const result = await chrome.tabs.sendMessage(tab.id, { type: 'kryptboard:set-mode', mode });
+    if (!result || !result.ok) throw new Error((result && result.error) || 'the page refused');
+    // an older content script may not echo the mode back; trust the request then
+    const applied = result.mode === 'plain' || result.mode === 'encrypted' ? result.mode : mode;
+    renderModeSwitch(applied);
+    setPageStatus(
+      applied === 'plain'
+        ? 'Plain mode — keystrokes go straight into the field.'
+        : 'Encrypt mode — keystrokes are buffered until you seal them.',
+      applied === 'plain' ? 'closed' : 'open'
+    );
+    // the choice also becomes the default for the next page
+    const next = await store.save({ startMode: applied });
+    fillForms(next);
+  } catch (error) {
+    setPageStatus(
+      'This page does not allow extensions (browser pages, the Web Store, and local files cannot be extended).',
+      'blocked'
+    );
+  }
+}
 
 function renderSessionKey() {
   const state = $('session-key-state');
@@ -411,6 +455,8 @@ async function boot() {
     if (store.get().keyModel === 'session' && sessionVault.has()) pushSessionKey();
   });
 
+  $('mode-plain').addEventListener('click', () => setMode('plain'));
+  $('mode-encrypt').addEventListener('click', () => setMode('encrypted'));
   $('toggle').addEventListener('click', onToggle);
   $('clear-pass').addEventListener('click', onClearPassphrase);
   $('reset').addEventListener('click', resetSettings);
