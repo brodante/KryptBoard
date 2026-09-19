@@ -353,10 +353,10 @@ byte-exact zeroization guarantee would need a WASM memory region, which is futur
 ## Performance
 
 Measured with `npm run bench` (`--json` for machines), node v22, single core, no hardware
-acceleration. The paper's Table 4 quotes ~450 MB/s and Figs. 4–5 show overhead that is
-negligible and grows linearly — those figures come from a native build. This extension ships
-a **portable pure-JS** AEAD (no WASM, no dependencies, byte-identical on every browser), so
-the honest numbers are these:
+acceleration. The paper reports roughly **450 MB/s** for ChaCha20-Poly1305 and overhead that
+is negligible and linear in message length — measured on a **native** build. This extension
+ships a **portable pure-JS** AEAD (no WASM, no dependencies, byte-identical on every
+browser), so the honest numbers are these:
 
 | payload | envelope | Algorithm-1 dict | AEAD seal | AEAD open | sealed MB/s |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -381,7 +381,7 @@ end in the passphrase model and **~0.07 ms** of pure AEAD in the paper's session
 - **Wire expansion is 1.48×** (base64 plus the 12-byte nonce and 16-byte tag), matching what
   the paper's figures imply; the Algorithm-1 dictionary is 6 characters larger for the same
   key and plaintext (JSON field names instead of `|` separators, padded base64).
-- **Throughput is not the paper's 450 MB/s.** The portable Poly1305 accumulator is the
+- **Throughput is not the paper's ~450 MB/s.** The portable Poly1305 accumulator is the
   bottleneck. Two ways to close the gap, if a workload ever needs it: a 32-bit-limb Poly1305
   (~10×, still pure JS), or `crypto.subtle` where the browser exposes ChaCha20-Poly1305
   (Firefox and Safari do; Chromium and Node's WebCrypto do not — which is exactly why the
