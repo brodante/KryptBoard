@@ -369,7 +369,7 @@ browser), so the honest numbers are these:
 ## Tests
 
 ```bash
-npm test                   # everything: 168 tests across eleven suites
+npm test                   # everything: 170 tests across eleven suites
 npm run test:crypto        # 44 tests: primitives, envelope + dictionary, interop vectors, fuzzing
 npm run test:dom           # 37 tests: the built bundle inside a simulated page
 npm run bench              # measured throughput / overhead / scaling
@@ -388,7 +388,7 @@ npm run build -- --check   # fail if bundle/content.js is stale
 | `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
 | `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |
 | `static.test.mjs` | 13 | packaging, permissions, no-network, markup/script cross-checks, the `[hidden]` CSS guard |
-| `demo.test.mjs` | 3 | the demo page loads the real modules and round-trips |
+| `demo.test.mjs` | 5 | the demo page loads the real modules and round-trips, including the paper's session-key panel: generate, fingerprint, Algorithm 1 dictionary, Algorithm 2 decryption, and the wipe on *Forget* |
 
 What is actually verified, not merely claimed:
 

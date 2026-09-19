@@ -24,6 +24,12 @@
           <option value="auto">Auto</option>
         </select>
       </label>
+      <label class="inline">Key
+        <select id="demo-keymodel">
+          <option value="passphrase">Passphrase</option>
+          <option value="session">Single-session key (paper)</option>
+        </select>
+      </label>
       <label class="inline check"><input type="checkbox" id="demo-hardened" /> PBKDF2</label>
     </div>
   </header>
@@ -79,11 +85,30 @@
       <h2>3 · Round-trip: decrypt an envelope locally</h2>
       <p class="note">Paste an envelope produced above, add the passphrase, and recover the plaintext — the same
         operation the Android <code>crypto-lib</code> performs on a phone.</p>
-      <textarea id="roundtrip-in" rows="3" placeholder="v1|CHACHA20-POLY1305|…"></textarea>
+      <textarea id="roundtrip-in" rows="3" placeholder="v1|CHACHA20-POLY1305|…  or  {&quot;nonce&quot;:&quot;…&quot;,&quot;ciphertext&quot;:&quot;…&quot;,&quot;tag&quot;:&quot;…&quot;}"></textarea>
       <div class="row">
         <input id="roundtrip-pass" type="password" placeholder="passphrase" autocomplete="off" />
         <button id="roundtrip-run" class="primary" type="button">Decrypt</button>
         <button id="roundtrip-send-to-kb" type="button">Load into keyboard buffer</button>
+      </div>
+      <div class="row">
+        <button id="session-generate" type="button">Generate session key</button>
+        <button id="session-copy" type="button">Copy sharing string</button>
+        <button id="session-forget" type="button">Forget key</button>
+        <code id="session-fingerprint" class="note">no session key</code>
+      </div>
+      <div class="row">
+        <label class="inline">Session output
+          <select id="demo-sessionformat">
+            <option value="json">Algorithm 1 dictionary</option>
+            <option value="envelope">v1|CHACHA20-POLY1305+SESSIONKEY|…</option>
+          </select>
+        </label>
+      </div>
+      <div class="note" id="session-note">
+        The paper's model: one key, generated here, never derived from a passphrase. Share the
+        <code>kbk1.…</code> string with the recipient out of band, then paste either form back into the box
+        above — a dictionary needs no passphrase at all.
       </div>
       <div id="roundtrip-out" class="out"></div>
       <div id="roundtrip-meta" class="note"></div>
