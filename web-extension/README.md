@@ -28,12 +28,17 @@ deviations.
 
 ## The paper
 
-*Secure Your Words Before You Send: The KryptBoard Pre-Send Encryption Method* — the
-published description of this design.
+This extension implements the method published as:
+
+> **Secure Your Words Before You Send: the KryptBoard Pre-Send Encryption Method**
+> Surya Pratap Singh Chauhan, Samyadeep Saha, Priyanka Biswas, Nirmalya Kar · NIT Agartala
+> *2026 International Conference on Emerging Trends and Innovations in ICT (ICEI)*, Pune, India, pp. 1–6
+> DOI [10.1109/ICEI65890.2026.11447792](https://doi.org/10.1109/ICEI65890.2026.11447792)
+> · [IEEE Xplore](https://ieeexplore.ieee.org/document/11447792/)
+
 [**Matching the paper exactly**](#matching-the-paper-exactly) maps every requirement, constant,
 algorithm and deviation to the file that implements it, and
 [Performance](#performance) reports the measured numbers next to the paper's claims.
-<!-- the DOI link goes here once it is published -->
 
 ---
 
@@ -282,9 +287,9 @@ the context label. The repository's test suite pins the browser's half with gold
 
 ## Matching the paper exactly
 
-The paper (*Secure Your Words Before You Send: The KryptBoard Pre-Send Encryption
-Method*, §III and Algorithms 1–2) specifies the method; this is where each piece of it
-lives and how faithful the implementation is.
+The paper ([*Secure Your Words Before You Send: the KryptBoard Pre-Send Encryption
+Method*](https://doi.org/10.1109/ICEI65890.2026.11447792), §III and Algorithms 1–2) specifies
+the method; this is where each piece of it lives and how faithful the implementation is.
 
 | Paper requirement | Where it lives | Status |
 |---|---|---|
@@ -400,7 +405,7 @@ end in the passphrase model and **~0.07 ms** of pure AEAD in the paper's session
 ## Tests
 
 ```bash
-npm test                   # everything: 180 tests across eleven suites
+npm test                   # everything: 181 tests across eleven suites
 npm run test:crypto        # 44 tests: primitives, envelope + dictionary, interop vectors, fuzzing
 npm run test:dom           # 40 tests: the built bundle inside a simulated page
 npm run bench              # measured throughput / overhead / scaling
@@ -418,7 +423,7 @@ npm run build -- --check   # fail if bundle/content.js is stale
 | `bench.test.mjs` | 3 | performance guards: a 500-character seal stays far below a frame, per-byte cost stays linear from 1 KiB to 64 KiB |
 | `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
 | `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |
-| `static.test.mjs` | 14 | packaging, permissions, no-network (author links excluded from the asset scan), markup/script cross-checks, the `[hidden]` CSS guard, the author watermark on every surface |
+| `static.test.mjs` | 15 | packaging, permissions, no-network (author links excluded from the asset scan), markup/script cross-checks, the `[hidden]` CSS guard, the author watermark and paper DOI on every surface, `CITATION.cff` |
 | `demo.test.mjs` | 6 | the demo page loads the real modules and round-trips, including the paper's session-key panel (generate, fingerprint, Algorithm 1 dictionary, Algorithm 2 decryption, the wipe on *Forget*) and the ⌨ Capture toggle driving a physical keystroke into the buffer |
 
 What is actually verified, not merely claimed:

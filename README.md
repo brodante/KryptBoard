@@ -12,8 +12,11 @@ A secure Android keyboard built with Kotlin, Jetpack Compose, and Material 3.
 > [`web-extension/README.md`](web-extension/README.md) for the threat model, the crypto
 > construction and the test suite.
 
-**Paper:** *Secure Your Words Before You Send: The KryptBoard Pre-Send Encryption Method*.
-<!-- the DOI link goes here once it is published -->
+**Paper:** S. P. S. Chauhan, S. Saha, P. Biswas, N. Kar, *Secure Your Words Before You Send:
+the KryptBoard Pre-Send Encryption Method*, 2026 International Conference on Emerging Trends
+and Innovations in ICT (ICEI), Pune, India, pp. 1–6.
+[doi:10.1109/ICEI65890.2026.11447792](https://doi.org/10.1109/ICEI65890.2026.11447792)
+· [`CITATION.cff`](CITATION.cff)
 
 ## Features
 

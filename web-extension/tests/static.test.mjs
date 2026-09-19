@@ -204,3 +204,30 @@ test('every surface carries the author watermark', async () => {
     assert.match(text, /href="https:\/\/github\.com\/brodante\/"/, `${file} is missing the author link`);
   }
 });
+
+test("the paper's DOI is linked wherever the watermark is, and in both READMEs", async () => {
+  const doi = 'https://doi.org/10.1109/ICEI65890.2026.11447792';
+  for (const file of ['src/popup.html', 'demo/demo.html', 'index.html', '../README.md', 'README.md']) {
+    const text = await read(file);
+    assert.ok(text.includes(doi), `${file} does not link the paper DOI`);
+    assert.match(text, /ICEI65890\.2026\.11447792/, `${file} does not name the DOI`);
+  }
+  // the extension README cites the paper properly: authors, venue, pages
+  const readme = await read('README.md');
+  assert.match(readme, /## The paper/);
+  assert.match(readme, /Surya Pratap Singh Chauhan/);
+  assert.match(readme, /NIT Agartala/);
+  assert.match(readme, /International Conference on Emerging Trends and Innovations in ICT/);
+  assert.match(readme, /pp\. 1–6/);
+  assert.match(readme, /https:\/\/ieeexplore\.ieee\.org\/document\/11447792\//);
+
+  // and the repository is machine-citable
+  const cff = await read('../CITATION.cff');
+  assert.match(cff, /^cff-version: 1\.2\.0$/m);
+  assert.match(cff, /doi: 10\.1109\/ICEI65890\.2026\.11447792/);
+  assert.match(cff, /Secure Your Words Before You Send/);
+  for (const author of ['Chauhan', 'Saha', 'Biswas', 'Kar']) {
+    assert.match(cff, new RegExp(`family-names: ${author}`), `CITATION.cff is missing ${author}`);
+  }
+  assert.match(cff, /https:\/\/github\.com\/brodante\/KryptBoard/);
+});

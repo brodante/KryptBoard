@@ -394,12 +394,20 @@ test('the popup carries the footer watermark and the author links', { skip }, as
   assert.match(text, /が作りました/);
 
   const links = [...popup.document.querySelectorAll('.watermark a')];
-  assert.equal(links.length, 2);
+  assert.equal(links.length, 3, 'two author links and the paper DOI');
   for (const link of links) {
-    assert.equal(link.getAttribute('href'), 'https://github.com/brodante/');
     assert.equal(link.getAttribute('rel'), 'noopener noreferrer');
     assert.equal(link.getAttribute('target'), '_blank');
   }
+  assert.deepEqual(
+    links.slice(0, 2).map((link) => link.getAttribute('href')),
+    ['https://github.com/brodante/', 'https://github.com/brodante/']
+  );
+
+  // the paper's DOI is linked, and readable as a DOI
+  const doi = links[2];
+  assert.equal(doi.getAttribute('href'), 'https://doi.org/10.1109/ICEI65890.2026.11447792');
+  assert.match(doi.textContent, /doi:10\.1109\/ICEI65890\.2026\.11447792/);
 });
 
 test('the popup shows when the page is capturing the keyboard', { skip }, async () => {
