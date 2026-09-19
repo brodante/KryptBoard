@@ -46,9 +46,35 @@ jobs:
           node-version: '22'
 
       - name: Configure Pages
+        id: pages
         uses: actions/configure-pages@v5
         with:
           enablement: true
+        # Enabling Pages needs repository-admin rights, which the workflow token
+        # does not have on a repository where Pages was never switched on. When
+        # that happens the step below turns it into an instruction instead of a
+        # cryptic "Resource not accessible by integration".
+        continue-on-error: true
+
+      - name: Check that Pages is enabled
+        if: steps.pages.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status=$(curl -s -o /tmp/pages.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pages")
+          if [ "$status" = "200" ]; then
+            echo "Pages is enabled — continuing."
+            exit 0
+          fi
+          echo "::error title=GitHub Pages is not enabled on this repository::$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/settings/pages"
+          echo "Set Source to \"GitHub Actions\" there, then re-run this workflow:"
+          echo "  Actions → Deploy demo to GitHub Pages → Re-run all jobs"
+          echo "(or push any change under web-extension/)."
+          exit 1
 
       - name: Fail if the committed bundle is stale
         working-directory: web-extension

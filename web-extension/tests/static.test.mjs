@@ -268,6 +268,14 @@ test('the GitHub Pages workflow publishes the preview, the demo and the zip', as
   // the stale-bundle gate keeps Pages from ever publishing an out-of-date build
   assert.match(workflow, /scripts\/build\.mjs --check/);
 
+  // a repository without Pages enabled gets an instruction, not a cryptic
+  // "Resource not accessible by integration"
+  assert.match(workflow, /continue-on-error: true/, 'configure-pages must not hard-fail before the explanation');
+  assert.match(workflow, /if: steps\.pages\.outcome != 'success'/);
+  assert.match(workflow, /::error title=GitHub Pages is not enabled on this repository::/);
+  assert.match(workflow, /settings\/pages/);
+  assert.match(workflow, /Re-run all jobs/);
+
   // the download button on the landing page points at the published zip
   const landing = await read('index.html');
   assert.match(landing, /href="kryptboard-latest\.zip"/);
