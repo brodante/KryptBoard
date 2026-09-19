@@ -26,6 +26,15 @@ model is kept alongside it because it is what the Android app shares.
 requirement of the paper to the file that implements it, including the two deliberate
 deviations.
 
+## The paper
+
+*Secure Your Words Before You Send: The KryptBoard Pre-Send Encryption Method* — the
+published description of this design.
+[**Matching the paper exactly**](#matching-the-paper-exactly) maps every requirement, constant,
+algorithm and deviation to the file that implements it, and
+[Performance](#performance) reports the measured numbers next to the paper's claims.
+<!-- the DOI link goes here once it is published -->
+
 ---
 
 ## Contents
