@@ -70,12 +70,14 @@
 
     <a class="cta" href="demo/demo.html">Open the live demo →</a>
 
-    <pre>v1|CHACHA20-POLY1305|&lt;nonce&gt;|&lt;ciphertext&gt;|&lt;tag&gt;   (base64url, unpadded)</pre>
+    <pre>v1|CHACHA20-POLY1305|&lt;nonce&gt;|&lt;ciphertext&gt;|&lt;tag&gt;   (base64url, unpadded)
+{"nonce":"…","ciphertext":"…","tag":"…"}          (paper Algorithm 1, base64)</pre>
 
     <ul>
       <li>Press <strong>Ctrl+Shift+K</strong> (or the button on the demo page) to open the keyboard.</li>
       <li><strong>Encrypted</strong> mode buffers keystrokes; only the sealed envelope reaches the page.</li>
       <li><strong>Plain</strong> mode commits keys straight into the focused field.</li>
+      <li><strong>Passphrase</strong> or <strong>single-session key</strong> (the paper's model): both are implemented.</li>
       <li>The demo page logs every DOM event it receives, so you can see exactly what leaks.</li>
     </ul>
 
