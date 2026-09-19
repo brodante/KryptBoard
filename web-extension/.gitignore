@@ -1,0 +1,4 @@
+# Tooling only — the extension itself has no build output beyond bundle/
+node_modules/
+package-lock.json
+*.zip

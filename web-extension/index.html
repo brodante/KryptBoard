@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KryptBoard — preview</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(900px 450px at 25% -10%, rgba(124, 108, 255, 0.22), transparent 70%),
+        radial-gradient(700px 400px at 90% 110%, rgba(53, 214, 164, 0.16), transparent 70%),
+        #0a0d16;
+      color: #e9edf9;
+      font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    main {
+      width: min(760px, 92vw);
+      padding: 34px 30px;
+      background: rgba(19, 26, 42, 0.9);
+      border: 1px solid #26304a;
+      border-radius: 18px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 700; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; background: #7c6cff; box-shadow: 0 0 0 5px rgba(124, 108, 255, 0.22); }
+    p { color: #98a2c2; }
+    .cta {
+      display: inline-block;
+      margin: 14px 0 6px;
+      padding: 12px 20px;
+      border-radius: 11px;
+      background: linear-gradient(180deg, #7c6cff, #6354e0);
+      color: #fff;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .cta:hover { filter: brightness(1.08); }
+    h2 {
+      margin: 26px 0 6px;
+      font-size: 15px;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      color: #b9c3e0;
+    }
+    ol { margin: 10px 0 0; padding-left: 20px; color: #98a2c2; }
+    ol li { margin: 4px 0; }
+    ol .cta { margin: 2px 0; padding: 8px 14px; font-size: 14px; }
+    .watermark {
+      margin: 20px 0 0;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #7d87a6;
+      text-align: center;
+    }
+    .watermark a { color: #b9c3e0; text-underline-offset: 2px; }
+    pre {
+      margin: 18px 0 6px;
+      padding: 12px;
+      overflow-x: auto;
+      background: #0d1220;
+      border: 1px solid #26304a;
+      border-radius: 10px;
+      color: #35d6a4;
+      font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    ul { color: #98a2c2; padding-left: 20px; }
+    code { color: #7c6cff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    .note { font-size: 12.5px; color: #6f7a99; margin-top: 18px; }
+    a.plain { color: #35d6a4; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><span class="dot"></span>KryptBoard <span style="font-size:13px;font-weight:600;color:#98a2c2;letter-spacing:.08em">BROWSER PREVIEW</span></div>
+    <p class="note" style="margin-top:6px">
+      This page is published with GitHub Pages from
+      <a class="plain" href="https://github.com/brodante/KryptBoard/tree/main/web-extension">web-extension/</a> —
+      the same folder that is the extension.
+    </p>
+
+    <p>
+      This server exists so you can try the extension's keyboard in a real browser without
+      installing anything. It serves the <strong>same modules</strong> the extension injects
+      (<code>src/keyboard.js</code>, <code>src/wiring.js</code>, <code>src/crypto.js</code>), wired to
+      <code>localStorage</code> instead of <code>chrome.storage</code>.
+    </p>
+
+    <a class="cta" href="demo/demo.html">Open the live demo →</a>
+
+    <pre>v1|CHACHA20-POLY1305|&lt;nonce&gt;|&lt;ciphertext&gt;|&lt;tag&gt;   (base64url, unpadded)
+{"nonce":"…","ciphertext":"…","tag":"…"}          (paper Algorithm 1, base64)</pre>
+
+    <ul>
+      <li>Press <strong>Ctrl+Shift+K</strong> (or the button on the demo page) to open the keyboard.</li>
+      <li><strong>Encrypted</strong> mode buffers keystrokes; only the sealed envelope reaches the page.</li>
+      <li><strong>Plain</strong> mode commits keys straight into the focused field.</li>
+      <li><strong>Passphrase</strong> or <strong>single-session key</strong> (the paper's model): both are implemented.</li>
+      <li>The demo page logs every DOM event it receives, so you can see exactly what leaks.</li>
+    </ul>
+
+    <h2>Get the extension</h2>
+
+    <p>
+      The demo above runs in the page you are reading. The real thing installs into your browser and
+      then works in <em>every</em> site you type into — no server, no account, no network permission.
+    </p>
+
+    <ol>
+      <li><a class="cta" href="kryptboard-latest.zip" download>Download the built extension (.zip)</a></li>
+      <li>Unzip it somewhere permanent.</li>
+      <li>Open <code>chrome://extensions</code>, switch <strong>Developer mode</strong> on.</li>
+      <li>Click <strong>Load unpacked</strong> and select the unzipped folder.</li>
+      <li>Press <strong>Ctrl+Shift+K</strong> on any page to open the keyboard.</li>
+    </ol>
+
+    <p class="note">
+      Prefer the source? <a class="plain"
+      href="https://github.com/brodante/KryptBoard/tree/main/web-extension">web-extension/</a> is a
+      plain MV3 folder — load it unpacked as-is. The
+      <a class="plain" href="https://github.com/brodante/KryptBoard/blob/main/web-extension/README.md">README</a>
+      covers the threat model, the crypto construction and the 185-test suite. This
+      <code>index.html</code> and the demo beside it are a preview convenience and are not part of
+      the packaged extension.
+    </p>
+
+    <p class="watermark">
+      Made with love by <a href="https://github.com/brodante/" target="_blank" rel="noopener noreferrer">d4nte</a><br />
+      愛をこめて <a href="https://github.com/brodante/" target="_blank" rel="noopener noreferrer">ダンテ</a> が作りました<br />
+      Paper: <a href="https://doi.org/10.1109/ICEI65890.2026.11447792" target="_blank" rel="noopener noreferrer">doi:10.1109/ICEI65890.2026.11447792</a>
+    </p>
+  </main>
+</body>
+</html>

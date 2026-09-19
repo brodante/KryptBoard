@@ -2,6 +2,27 @@
 
 A secure Android keyboard built with Kotlin, Jetpack Compose, and Material 3.
 
+> **Live demo (GitHub Pages):** `https://brodante.github.io/KryptBoard/` — the browser build's
+> keyboard running on a normal web page, with the *Download the extension* button. It is
+> published by [`.github/workflows/pages.yml`](.github/workflows/pages.yml); enable
+> *Settings → Pages → Source: GitHub Actions* once and every push to `main` redeploys it.
+
+> **Browser build:** [`web-extension/`](web-extension/) contains KryptBoard as a
+> Manifest V3 browser extension — the same buffered-keystroke design and the same
+> `v1|alg|nonce|ct|tag` envelope, so ciphertext is interchangeable between the phone and
+> the browser. It also implements the published paper's construction in full (a
+> locally generated single-session key, Algorithm 1's `{nonce, ciphertext, tag}` output,
+> buffer zeroization) and adds a **⌨ Capture** toggle that routes an external keyboard's
+> keystrokes into the extension's buffer so the page never sees them. See
+> [`web-extension/README.md`](web-extension/README.md) for the threat model, the crypto
+> construction and the test suite.
+
+**Paper:** S. P. S. Chauhan, S. Saha, P. Biswas, N. Kar, *Secure Your Words Before You Send:
+the KryptBoard Pre-Send Encryption Method*, 2026 International Conference on Emerging Trends
+and Innovations in ICT (ICEI), Pune, India, pp. 1–6.
+[doi:10.1109/ICEI65890.2026.11447792](https://doi.org/10.1109/ICEI65890.2026.11447792)
+· [`CITATION.cff`](CITATION.cff)
+
 ## Features
 
 - **Security First**: No internet permissions, no keystroke logging
@@ -44,10 +65,16 @@ A secure Android keyboard built with Kotlin, Jetpack Compose, and Material 3.
 │       ├── AesCtrHmacStub.kt       # AES-CTR-HMAC stub implementation
 │       ├── Base64Url.kt            # Base64URL encoding utilities
 │       └── Envelope.kt             # Ciphertext envelope serialization
-└── baselineprofile/                 # Baseline profile for performance
-    ├── build.gradle.kts            # Baseline profile build configuration
-    └── src/main/java/com/example/baseline/
-        └── BaselineProfileGenerator.kt    # Profile generation tests
+├── baselineprofile/                 # Baseline profile for performance
+│   ├── build.gradle.kts            # Baseline profile build configuration
+│   └── src/main/java/com/example/baseline/
+│       └── BaselineProfileGenerator.kt    # Profile generation tests
+└── web-extension/                   # Browser sibling of the IME (Manifest V3)
+    ├── manifest.json               # permissions: ["storage"] — no host permissions
+    ├── bundle/content.js           # generated content script (settings+crypto+keyboard)
+    ├── src/                        # crypto.js, keyboard.js/.css, wiring.js, content.js, popup.*
+    ├── demo/demo.html              # live demo using the real modules
+    └── tests/                      # RFC vectors, DOM integration, packaging checks
 ```
 
 ## Setup Instructions
@@ -103,6 +130,24 @@ A secure Android keyboard built with Kotlin, Jetpack Compose, and Material 3.
 - ✅ Local-only encryption (stub implementation)
 - ✅ ProGuard/R8 enabled for release builds
 
+The browser build in `web-extension/` holds the same line: `permissions: ["storage"]`,
+no host permissions, no `fetch`/`XMLHttpRequest`/`WebSocket`/`eval` anywhere in the
+shipped sources, a closed shadow root around the plaintext buffer, password fields
+excluded as targets, and a test suite that fails if any of that changes.
+
+### Envelope interoperability
+
+Both implementations use the same serialisation, so a message sealed on one side opens
+on the other:
+
+```
+v1|CHACHA20-POLY1305|<nonce>|<ciphertext>|<tag>        all base64url, unpadded
+```
+
+The browser test suite pins this format with golden vectors whose derived keys were
+recomputed independently with Python's `hashlib`/`hmac` (`web-extension/tests/crypto.test.mjs`),
+which is the reference to check the Kotlin side against.
+
 ## Usage
 
 ### Plain Mode
@@ -134,3 +179,9 @@ A secure Android keyboard built with Kotlin, Jetpack Compose, and Material 3.
 ## License
 
 This project is for educational/demonstration purposes.
+
+---
+
+Made with love by [d4nte](https://github.com/brodante/)
+
+愛をこめて [ダンテ](https://github.com/brodante/) が作りました

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KryptBoard — live demo</title>
+  <link rel="stylesheet" href="demo.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="dot"></span>KryptBoard <span class="sub">live demo</span></div>
+    <div class="controls">
+      <button id="open-kb" class="primary" type="button">Open keyboard</button>
+      <label class="inline">Mode
+        <select id="demo-mode">
+          <option value="encrypted">Encrypted</option>
+          <option value="plain">Plain</option>
+        </select>
+      </label>
+      <label class="inline">Theme
+        <select id="demo-theme">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+          <option value="auto">Auto</option>
+        </select>
+      </label>
+      <label class="inline">Key
+        <select id="demo-keymodel">
+          <option value="passphrase">Passphrase</option>
+          <option value="session">Single-session key (paper)</option>
+        </select>
+      </label>
+      <label class="inline check"><input type="checkbox" id="demo-hardened" /> PBKDF2</label>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h1>What you are looking at</h1>
+      <p>
+        This page loads the <strong>same modules the browser extension injects</strong>
+        (<code>src/keyboard.js</code>, <code>src/wiring.js</code>, <code>src/crypto.js</code>) over a normal HTTP origin —
+        the extension ships them as a content script instead. Everything below is real: the keys, the buffer,
+        the AEAD seal, the envelope, the target tracking.
+      </p>
+      <p class="note">
+        Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> to toggle the keyboard, or click “Open keyboard”.
+        In <em>Encrypted</em> mode keystrokes stay in the overlay and only the sealed envelope is committed to
+        the field below — watch the page-side log to see exactly what the page receives. Press
+        <strong>⌨ Capture</strong> in the overlay's toolbar and type on your physical keyboard: every keystroke
+        lands in the buffer and the page log stays empty.
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>1 · A field for the keyboard to type into</h2>
+      <label class="field">Message field (textarea)
+        <textarea id="msg" rows="2" placeholder="Focus me, then open the keyboard…"></textarea>
+      </label>
+      <label class="field">Search box (input — Enter submits the little form)
+        <form id="search-form" autocomplete="off">
+          <input id="search" type="search" placeholder="Enter fires this form's submit event" />
+        </form>
+      </label>
+      <div class="field">Rich text (contenteditable)
+        <div id="rich" class="rich" contenteditable="true" role="textbox" aria-label="Rich text demo">Edit me…</div>
+      </div>
+      <label class="field">Password field (the extension refuses to target these)
+        <input id="pw" type="password" placeholder="never a commit target" />
+      </label>
+    </section>
+
+    <section class="panel">
+      <h2>2 · Page-side log — what the page actually receives</h2>
+      <p class="note">
+        Each entry is emitted by ordinary DOM events on this page. In encrypted mode you should only ever
+        see <code>v1|CHACHA20-POLY1305|…</code> envelopes, never your keystrokes.
+      </p>
+      <ol id="log" class="log" aria-live="polite"></ol>
+      <div class="row">
+        <button id="clear-log" type="button">Clear log</button>
+        <button id="send-collect" type="button">Commit buffer to field</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>3 · Round-trip: decrypt an envelope locally</h2>
+      <p class="note">Paste an envelope produced above, add the passphrase, and recover the plaintext — the same
+        operation the Android <code>crypto-lib</code> performs on a phone.</p>
+      <textarea id="roundtrip-in" rows="3" placeholder="v1|CHACHA20-POLY1305|…  or  {&quot;nonce&quot;:&quot;…&quot;,&quot;ciphertext&quot;:&quot;…&quot;,&quot;tag&quot;:&quot;…&quot;}"></textarea>
+      <div class="row">
+        <input id="roundtrip-pass" type="password" placeholder="passphrase" autocomplete="off" />
+        <button id="roundtrip-run" class="primary" type="button">Decrypt</button>
+        <button id="roundtrip-send-to-kb" type="button">Load into keyboard buffer</button>
+      </div>
+      <div class="row">
+        <button id="session-generate" type="button">Generate session key</button>
+        <button id="session-copy" type="button">Copy sharing string</button>
+        <button id="session-forget" type="button">Forget key</button>
+        <code id="session-fingerprint" class="note">no session key</code>
+      </div>
+      <div class="row">
+        <label class="inline">Session output
+          <select id="demo-sessionformat">
+            <option value="json">Algorithm 1 dictionary</option>
+            <option value="envelope">v1|CHACHA20-POLY1305+SESSIONKEY|…</option>
+          </select>
+        </label>
+      </div>
+      <div class="note" id="session-note">
+        The paper's model: one key, generated here, never derived from a passphrase. Share the
+        <code>kbk1.…</code> string with the recipient out of band, then paste either form back into the box
+        above — a dictionary needs no passphrase at all.
+      </div>
+      <div id="roundtrip-out" class="out"></div>
+      <div id="roundtrip-meta" class="note"></div>
+    </section>
+
+    <section class="panel">
+      <h2>4 · Envelope format</h2>
+      <pre id="format-sample">v1|CHACHA20-POLY1305|&lt;12-byte nonce&gt;|&lt;ciphertext&gt;|&lt;16-byte tag&gt;   (all base64url, unpadded)</pre>
+      <button id="gen-sample" type="button">Seal a sample with a fixed nonce</button>
+      <div class="note">
+        Fixed nonces are <strong>for test vectors only</strong> — the extension always draws a fresh random nonce.
+      </div>
+    </section>
+    <footer class="demo-foot">
+    <p class="watermark">
+      Made with love by <a href="https://github.com/brodante/" target="_blank" rel="noopener noreferrer">d4nte</a><br />
+      愛をこめて <a href="https://github.com/brodante/" target="_blank" rel="noopener noreferrer">ダンテ</a> が作りました<br />
+      Paper: <a href="https://doi.org/10.1109/ICEI65890.2026.11447792" target="_blank" rel="noopener noreferrer">doi:10.1109/ICEI65890.2026.11447792</a>
+    </p>
+  </footer>
+
+</main>
+
+  <script type="module" src="demo.js"></script>
+</body>
+</html>

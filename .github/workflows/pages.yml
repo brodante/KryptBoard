@@ -1,0 +1,100 @@
+# Publish the KryptBoard preview + live demo to GitHub Pages.
+#
+# The site is the `web-extension/` folder itself: index.html, the demo page and
+# the real `src/` modules (the demo imports them over HTTP instead of shipping
+# them bundled). Nothing here is built server-side, so Pages can serve it as-is
+# — except that the installable extension zip is produced during the run and
+# published alongside the page.
+#
+# One-time setup, in the repository: Settings → Pages → Source: "GitHub Actions".
+# (The `enablement: true` input below asks GitHub to set that for us.)
+#
+# The published URL is https://<owner>.github.io/<repo>/ — everything on the
+# page uses relative links, so it works from that sub-path unchanged.
+
+name: Deploy demo to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-extension/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push supersedes an in-flight run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Stage the site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Fail if the committed bundle is stale
+        working-directory: web-extension
+        run: node scripts/build.mjs --check
+
+      - name: Build the installable extension zip
+        working-directory: web-extension
+        run: node scripts/build.mjs --zip
+
+      - name: Stage the site
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          # everything the page actually needs
+          cp -r web-extension/index.html _site/
+          cp -r web-extension/demo _site/
+          cp -r web-extension/src _site/
+          cp -r web-extension/bundle _site/
+          cp -r web-extension/assets _site/
+          cp -r web-extension/manifest.json _site/
+          # ...plus the freshly built zip, so the page can offer a download.
+          # `kryptboard-latest.zip` is the stable name the page links to, so a
+          # version bump never breaks the button.
+          cp web-extension/kryptboard-*.zip _site/
+          cp web-extension/kryptboard-*.zip _site/kryptboard-latest.zip
+          # ...plus the paper's citation file
+          cp CITATION.cff _site/
+          # no Jekyll: keep every file exactly as it is on disk
+          touch _site/.nojekyll
+
+      - name: List what will be published
+        run: find _site -type f | sort
+
+      - name: Upload the artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

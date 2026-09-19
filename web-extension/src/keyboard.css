@@ -1,0 +1,549 @@
+/**
+ * KryptBoard keyboard overlay styles.
+ * Everything here lives inside a shadow root: page CSS cannot reach it, and
+ * these rules cannot leak into the page. Sizing/positioning is declared on
+ * :host so the overlay behaves like a bottom sheet without touching the DOM
+ * around it.
+ */
+
+/*
+ * !important on the host geometry is deliberate: this overlay is meant to be
+ * un-hideable by the page it is serving, so page rules (even !important ones
+ * of equal weight) must not be able to collapse or bury it.
+ */
+:host {
+  all: initial;
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  top: auto !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  transform: none !important;
+  justify-content: center;
+  pointer-events: none;
+  contain: layout style;
+}
+
+:host([hidden]) {
+  display: none !important;
+}
+
+/*
+ * Author rules override the UA stylesheet's `[hidden] { display: none }`
+ * regardless of specificity, so any rule below that sets `display` must also
+ * cover the hidden state explicitly — otherwise the element would never hide.
+ */
+.kb[hidden],
+.kb [hidden] {
+  display: none !important;
+}
+
+.kb {
+  /* ---------- design tokens: dark (default) ---------- */
+  --kb-bg: #0e1220;
+  --kb-bg-soft: #161b2e;
+  --kb-surface: #1c2237;
+  --kb-surface-2: #232a42;
+  --kb-border: #2c3350;
+  --kb-text: #e7ebf7;
+  --kb-text-dim: #9aa4c4;
+  --kb-accent: #7c6cff;
+  --kb-accent-soft: #2a2a5e;
+  --kb-crypto: #35d6a4;
+  --kb-warn: #f0b429;
+  --kb-error: #ff6b81;
+  --kb-key: #242b45;
+  --kb-key-hover: #2f3859;
+  --kb-key-mod: #1b2138;
+  --kb-key-text: #eaf0ff;
+  --kb-shadow: 0 -18px 48px rgba(0, 0, 0, 0.55);
+  --kb-radius: 16px;
+
+  box-sizing: border-box;
+  pointer-events: auto;
+  width: min(980px, 100vw);
+  max-height: 88vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background:
+    radial-gradient(1200px 320px at 50% -10%, rgba(124, 108, 255, 0.22), transparent 70%),
+    var(--kb-bg);
+  color: var(--kb-text);
+  border: 1px solid var(--kb-border);
+  border-bottom: none;
+  border-radius: var(--kb-radius) var(--kb-radius) 0 0;
+  box-shadow: var(--kb-shadow);
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  text-rendering: optimizeLegibility;
+  animation: kb-rise 140ms ease-out;
+}
+
+.kb *,
+.kb *::before,
+.kb *::after {
+  box-sizing: border-box;
+}
+
+.kb[data-theme="light"] {
+  --kb-bg: #f6f7fb;
+  --kb-bg-soft: #eceefa;
+  --kb-surface: #ffffff;
+  --kb-surface-2: #f0f2fa;
+  --kb-border: #d6dae8;
+  --kb-text: #131735;
+  --kb-text-dim: #5b6484;
+  --kb-accent: #5b4be8;
+  --kb-accent-soft: #e5e2ff;
+  --kb-crypto: #0f9d76;
+  --kb-warn: #a86b00;
+  --kb-error: #c62b45;
+  --kb-key: #ffffff;
+  --kb-key-hover: #eceefe;
+  --kb-key-mod: #e8eaf6;
+  --kb-key-text: #1a1f3c;
+  --kb-shadow: 0 -14px 40px rgba(28, 34, 60, 0.22);
+}
+
+@media (prefers-color-scheme: light) {
+  .kb[data-theme="auto"] {
+    --kb-bg: #f6f7fb;
+    --kb-bg-soft: #eceefa;
+    --kb-surface: #ffffff;
+    --kb-surface-2: #f0f2fa;
+    --kb-border: #d6dae8;
+    --kb-text: #131735;
+    --kb-text-dim: #5b6484;
+    --kb-accent: #5b4be8;
+    --kb-accent-soft: #e5e2ff;
+    --kb-crypto: #0f9d76;
+    --kb-warn: #a86b00;
+    --kb-error: #c62b45;
+    --kb-key: #ffffff;
+    --kb-key-hover: #eceefe;
+    --kb-key-mod: #e8eaf6;
+    --kb-key-text: #1a1f3c;
+    --kb-shadow: 0 -14px 40px rgba(28, 34, 60, 0.22);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kb {
+    animation: none;
+  }
+}
+
+@keyframes kb-rise {
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ---------------------------- top bar ---------------------------- */
+
+.kb-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: linear-gradient(0deg, transparent, rgba(255, 255, 255, 0.03));
+  border-bottom: 1px solid var(--kb-border);
+}
+
+.kb-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.kb-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--kb-crypto);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--kb-crypto) 25%, transparent);
+}
+
+.kb[data-mode="encrypted"] .kb-dot {
+  background: var(--kb-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--kb-accent) 30%, transparent);
+  animation: kb-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes kb-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kb[data-mode="encrypted"] .kb-dot { animation: none; }
+}
+
+.kb-target {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--kb-text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.kb-target.is-empty {
+  color: var(--kb-warn);
+}
+
+.kb-bar-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* ---------------------------- panel ------------------------------ */
+
+.kb-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 8px;
+}
+
+.kb-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--kb-text-dim);
+}
+
+.kb-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.kb-chip {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.kb-chip-enc {
+  color: var(--kb-accent);
+  background: var(--kb-accent-soft);
+  border-color: color-mix(in srgb, var(--kb-accent) 45%, transparent);
+}
+
+.kb-chip-env {
+  color: var(--kb-crypto);
+  background: color-mix(in srgb, var(--kb-crypto) 14%, transparent);
+  border-color: color-mix(in srgb, var(--kb-crypto) 45%, transparent);
+}
+
+.kb-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--kb-text-dim);
+  min-width: 62px;
+  text-align: right;
+}
+
+.kb-buffer {
+  width: 100%;
+  min-height: 46px;
+  max-height: 16vh;
+  resize: vertical;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--kb-border);
+  background: var(--kb-surface);
+  color: var(--kb-text);
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  outline: none;
+}
+
+.kb-buffer:focus {
+  border-color: color-mix(in srgb, var(--kb-accent) 65%, var(--kb-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--kb-accent) 22%, transparent);
+}
+
+.kb-buffer[readonly] {
+  color: var(--kb-text-dim);
+  background: var(--kb-bg-soft);
+  resize: none;
+}
+
+.kb-status {
+  min-height: 17px;
+  font-size: 11.5px;
+  color: var(--kb-text-dim);
+  border-left: 2px solid var(--kb-border);
+  padding-left: 8px;
+}
+
+.kb-status[data-kind="crypto"] { color: var(--kb-accent); border-color: var(--kb-accent); }
+.kb-status[data-kind="ok"]     { color: var(--kb-crypto); border-color: var(--kb-crypto); }
+.kb-status[data-kind="warn"]   { color: var(--kb-warn);   border-color: var(--kb-warn); }
+.kb-status[data-kind="error"]  { color: var(--kb-error);  border-color: var(--kb-error); }
+
+.kb-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.kb-spacer {
+  flex: 1 1 auto;
+}
+
+.kb-modes {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 9px;
+  background: var(--kb-bg-soft);
+  border: 1px solid var(--kb-border);
+}
+
+.kb-mode {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--kb-text-dim);
+  font: inherit;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.kb-mode:hover {
+  color: var(--kb-text);
+}
+
+.kb-mode.is-active {
+  background: var(--kb-accent);
+  color: #fff;
+}
+
+.kb[data-mode="plain"] .kb-mode[data-v="plain"].is-active {
+  background: var(--kb-surface-2);
+  color: var(--kb-text);
+}
+
+/* --------------------------- buttons ----------------------------- */
+
+.kb button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.kb-ghost,
+.kb-act {
+  appearance: none;
+  background: var(--kb-surface);
+  color: var(--kb-text);
+  border: 1px solid var(--kb-border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.kb-ghost:hover,
+.kb-act:hover {
+  background: var(--kb-key-hover);
+}
+
+/* the ⌨ Capture toggle while it is routing keystrokes into the buffer */
+.kb-capture {
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-capture.is-active {
+  background: var(--kb-accent);
+  border-color: color-mix(in srgb, var(--kb-accent) 70%, #000);
+  color: #fff;
+}
+
+.kb-capture.is-active:hover {
+  background: color-mix(in srgb, var(--kb-accent) 86%, #000);
+}
+
+.kb-ghost:focus-visible,
+.kb-act:focus-visible,
+.kb-key:focus-visible,
+.kb-mode:focus-visible {
+  outline: 2px solid var(--kb-accent);
+  outline-offset: 1px;
+}
+
+.kb-send {
+  background: linear-gradient(180deg, var(--kb-accent), color-mix(in srgb, var(--kb-accent) 78%, #000));
+  border-color: color-mix(in srgb, var(--kb-accent) 70%, #000);
+  color: #fff;
+  padding: 5px 13px;
+}
+
+.kb[data-mode="plain"] .kb-send {
+  background: var(--kb-surface-2);
+  color: var(--kb-text);
+  border-color: var(--kb-border);
+}
+
+.kb-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.kb-decrypt {
+  color: var(--kb-crypto);
+  border-color: color-mix(in srgb, var(--kb-crypto) 45%, var(--kb-border));
+}
+
+/* ------------------------- passphrase ---------------------------- */
+
+.kb-pass-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: var(--kb-bg-soft);
+  border: 1px dashed color-mix(in srgb, var(--kb-accent) 45%, var(--kb-border));
+}
+
+.kb-pass {
+  flex: 1 1 260px;
+  min-width: 180px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--kb-border);
+  background: var(--kb-surface);
+  color: var(--kb-text);
+  font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  outline: none;
+}
+
+.kb-pass:focus {
+  border-color: color-mix(in srgb, var(--kb-accent) 65%, var(--kb-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--kb-accent) 20%, transparent);
+}
+
+.kb-remember {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--kb-text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.kb-hint {
+  font-size: 11px;
+  color: var(--kb-text-dim);
+  opacity: 0.85;
+}
+
+/* ---------------------------- keys ------------------------------- */
+
+.kb-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 12px;
+}
+
+.kb-keyrow {
+  display: flex;
+  gap: 6px;
+}
+
+.kb-key {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  border: 1px solid var(--kb-border);
+  background: var(--kb-key);
+  color: var(--kb-key-text);
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform 60ms ease, background 90ms ease;
+  user-select: none;
+}
+
+.kb-key:hover {
+  background: var(--kb-key-hover);
+}
+
+.kb-key:active {
+  transform: translateY(1px);
+}
+
+.kb-key-mod {
+  flex: 1.7 1 0;
+  background: var(--kb-key-mod);
+  color: var(--kb-text-dim);
+  font-size: 14px;
+}
+
+.kb-key-wide {
+  flex: 5 1 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.kb-key.is-active {
+  background: var(--kb-accent);
+  color: #fff;
+  border-color: color-mix(in srgb, var(--kb-accent) 70%, #000);
+}
+
+.kb-needs-pass .kb-buffer {
+  border-color: color-mix(in srgb, var(--kb-warn) 55%, var(--kb-border));
+}
+
+/* Narrow viewports: keep every key reachable, shrink the chrome. */
+@media (max-width: 620px) {
+  .kb-key {
+    height: 36px;
+    font-size: 13.5px;
+  }
+  .kb-key-mod {
+    flex: 1.5 1 0;
+    font-size: 12px;
+  }
+  .kb-hint {
+    display: none;
+  }
+}

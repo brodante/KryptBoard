@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use KryptBoard, please cite the paper below."
+title: "KryptBoard — encrypted keyboard (Android IME and browser extension)"
+type: software
+repository-code: "https://github.com/brodante/KryptBoard"
+license: MIT
+year: 2026
+preferred-citation:
+  type: conference-paper
+  title: "Secure Your Words Before You Send: the KryptBoard Pre-Send Encryption Method"
+  authors:
+    - family-names: Chauhan
+      given-names: Surya Pratap Singh
+      affiliation: "NIT Agartala, Dept. of CSE, Tripura, India"
+    - family-names: Saha
+      given-names: Samyadeep
+      affiliation: "NIT Agartala, Dept. of CSE, Tripura, India"
+    - family-names: Biswas
+      given-names: Priyanka
+      affiliation: "NIT Agartala, Dept. of CSE, Tripura, India"
+    - family-names: Kar
+      given-names: Nirmalya
+      affiliation: "NIT Agartala, Dept. of CSE, Tripura, India"
+  collection-title: "2026 International Conference on Emerging Trends and Innovations in ICT (ICEI)"
+  publisher:
+    name: IEEE
+  year: 2026
+  start: 1
+  end: 6
+  doi: 10.1109/ICEI65890.2026.11447792
+  url: "https://doi.org/10.1109/ICEI65890.2026.11447792"
