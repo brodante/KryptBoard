@@ -41,6 +41,16 @@
       text-decoration: none;
     }
     .cta:hover { filter: brightness(1.08); }
+    h2 {
+      margin: 26px 0 6px;
+      font-size: 15px;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      color: #b9c3e0;
+    }
+    ol { margin: 10px 0 0; padding-left: 20px; color: #98a2c2; }
+    ol li { margin: 4px 0; }
+    ol .cta { margin: 2px 0; padding: 8px 14px; font-size: 14px; }
     .watermark {
       margin: 20px 0 0;
       font-size: 12px;
@@ -68,6 +78,11 @@
 <body>
   <main>
     <div class="brand"><span class="dot"></span>KryptBoard <span style="font-size:13px;font-weight:600;color:#98a2c2;letter-spacing:.08em">BROWSER PREVIEW</span></div>
+    <p class="note" style="margin-top:6px">
+      This page is published with GitHub Pages from
+      <a class="plain" href="https://github.com/brodante/KryptBoard/tree/main/web-extension">web-extension/</a> —
+      the same folder that is the extension.
+    </p>
 
     <p>
       This server exists so you can try the extension's keyboard in a real browser without
@@ -89,12 +104,29 @@
       <li>The demo page logs every DOM event it receives, so you can see exactly what leaks.</li>
     </ul>
 
+    <h2>Get the extension</h2>
+
+    <p>
+      The demo above runs in the page you are reading. The real thing installs into your browser and
+      then works in <em>every</em> site you type into — no server, no account, no network permission.
+    </p>
+
+    <ol>
+      <li><a class="cta" href="kryptboard-latest.zip" download>Download the built extension (.zip)</a></li>
+      <li>Unzip it somewhere permanent.</li>
+      <li>Open <code>chrome://extensions</code>, switch <strong>Developer mode</strong> on.</li>
+      <li>Click <strong>Load unpacked</strong> and select the unzipped folder.</li>
+      <li>Press <strong>Ctrl+Shift+K</strong> on any page to open the keyboard.</li>
+    </ol>
+
     <p class="note">
-      To use the real extension: <code>chrome://extensions</code> → Developer mode → Load unpacked →
-      select the <code>web-extension/</code> folder. Read
-      <a class="plain" href="README.md">README.md</a> for the threat model, the crypto construction and
-      the test suite. This <code>index.html</code> is a preview convenience and is not part of the
-      packaged extension.
+      Prefer the source? <a class="plain"
+      href="https://github.com/brodante/KryptBoard/tree/main/web-extension">web-extension/</a> is a
+      plain MV3 folder — load it unpacked as-is. The
+      <a class="plain" href="https://github.com/brodante/KryptBoard/blob/main/web-extension/README.md">README</a>
+      covers the threat model, the crypto construction and the 185-test suite. This
+      <code>index.html</code> and the demo beside it are a preview convenience and are not part of
+      the packaged extension.
     </p>
 
     <p class="watermark">

@@ -45,6 +45,7 @@ algorithm and deviation to the file that implements it, and
 ## Contents
 
 - [Install it](#install-it)
+- [Host it (GitHub Pages)](#host-it-github-pages)
 - [What it does](#what-it-does)
 - [How the crypto works](#how-the-crypto-works)
 - [Threat model](#threat-model)
@@ -405,7 +406,7 @@ end in the passphrase model and **~0.07 ms** of pure AEAD in the paper's session
 ## Tests
 
 ```bash
-npm test                   # everything: 185 tests across eleven suites
+npm test                   # everything: 186 tests across eleven suites
 npm run test:crypto        # 44 tests: primitives, envelope + dictionary, interop vectors, fuzzing
 npm run test:dom           # 43 tests: the built bundle inside a simulated page
 npm run bench              # measured throughput / overhead / scaling
@@ -423,7 +424,7 @@ npm run build -- --check   # fail if bundle/content.js is stale
 | `bench.test.mjs` | 3 | performance guards: a 500-character seal stays far below a frame, per-byte cost stays linear from 1 KiB to 64 KiB |
 | `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
 | `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |
-| `static.test.mjs` | 15 | packaging, permissions, no-network (author links excluded from the asset scan), markup/script cross-checks, the `[hidden]` CSS guard, the author watermark and paper DOI on every surface, `CITATION.cff` |
+| `static.test.mjs` | 16 | packaging, permissions, no-network (author links excluded from the asset scan), markup/script cross-checks, the `[hidden]` CSS guard, the author watermark and paper DOI on every surface, `CITATION.cff`, the GitHub Pages workflow (permissions, staged files, stale-bundle gate) |
 | `demo.test.mjs` | 6 | the demo page loads the real modules and round-trips, including the paper's session-key panel (generate, fingerprint, Algorithm 1 dictionary, Algorithm 2 decryption, the wipe on *Forget*) and the ⌨ Capture toggle driving a physical keystroke into the buffer |
 
 What is actually verified, not merely claimed:
@@ -461,6 +462,41 @@ round-trip. Serve the folder and open the page:
 
 ```bash
 python3 -m http.server 8787        # then open http://localhost:8787/demo/demo.html
+```
+
+## Host it (GitHub Pages)
+
+The same folder is a static site — no server code, no build step at runtime — so GitHub Pages
+can publish it as-is. `.github/workflows/pages.yml` does exactly that on every push to `main`:
+
+1. **Turn Pages on once:** repository → *Settings* → *Pages* → **Source: GitHub Actions**.
+   (The workflow passes `enablement: true` to `actions/configure-pages`, so it will also offer
+   to do this for you on the first run.)
+2. **Push to `main`** (or run the workflow from the *Actions* tab → *Deploy demo to GitHub
+   Pages* → *Run workflow*).
+3. The site appears at **`https://<owner>.github.io/<repo>/`** — for this repository,
+   `https://brodante.github.io/KryptBoard/`.
+
+What gets published: `index.html`, `demo/`, the real `src/` modules, the `bundle/`, the icons,
+`manifest.json`, `CITATION.cff`, and the freshly built `kryptboard-<version>.zip` (also copied
+to the stable name `kryptboard-latest.zip`, which the page's download button uses). Tests,
+tooling, `node_modules` and the README are never uploaded.
+
+The run refuses to publish a stale bundle (`node scripts/build.mjs --check`), so the live demo
+can never be older than the sources it claims to ship.
+
+Everything on the page uses relative links, so it works unchanged from the `/KryptBoard/`
+sub-path. A custom domain works too: point it at the Pages site and add a `CNAME` file to the
+staged folder.
+
+### Local preview, two ways
+
+```bash
+python3 -m http.server 8787        # zero dependencies: the files are already static
+# …or exactly what Pages will serve, including the zip and .nojekyll:
+mkdir -p /tmp/kb-site && cp -r index.html demo src bundle assets manifest.json /tmp/kb-site/
+node scripts/build.mjs --zip && cp kryptboard-*.zip /tmp/kb-site/ && cp kryptboard-*.zip /tmp/kb-site/kryptboard-latest.zip
+touch /tmp/kb-site/.nojekyll && (cd /tmp/kb-site && python3 -m http.server 8788)
 ```
 
 ## License

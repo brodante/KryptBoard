@@ -231,3 +231,45 @@ test("the paper's DOI is linked wherever the watermark is, and in both READMEs",
   }
   assert.match(cff, /https:\/\/github\.com\/brodante\/KryptBoard/);
 });
+
+test('the GitHub Pages workflow publishes the preview, the demo and the zip', async () => {
+  const workflow = await read('../.github/workflows/pages.yml');
+
+  // it runs on the default branch, and can be started by hand
+  assert.match(workflow, /branches: \[main\]/);
+  assert.match(workflow, /workflow_dispatch:/);
+
+  // the permissions the Pages deployment needs, and nothing broader
+  assert.match(workflow, /pages: write/);
+  assert.match(workflow, /id-token: write/);
+  assert.match(workflow, /contents: read/);
+  assert.equal(/contents: write/.test(workflow), false, 'the workflow must not ask to write to the repo');
+
+  // the action pins and the deployment environment
+  for (const action of [
+    'actions/checkout@v4',
+    'actions/setup-node@v4',
+    'actions/configure-pages@v5',
+    'actions/upload-pages-artifact@v3',
+    'actions/deploy-pages@v4'
+  ]) {
+    assert.ok(workflow.includes(action), `the workflow is missing ${action}`);
+  }
+  assert.match(workflow, /name: github-pages/);
+
+  // it stages exactly what the site needs, from web-extension/, and no Jekyll
+  for (const item of ['index.html', 'demo', 'src', 'bundle', 'assets', 'manifest.json']) {
+    assert.ok(workflow.includes(`web-extension/${item}`), `the site is missing ${item}`);
+  }
+  assert.match(workflow, /touch _site\/\.nojekyll/);
+  assert.equal(/web-extension\/tests|web-extension\/scripts|node_modules/.test(workflow), false,
+    'the site must not publish tests, tooling or dependencies');
+
+  // the stale-bundle gate keeps Pages from ever publishing an out-of-date build
+  assert.match(workflow, /scripts\/build\.mjs --check/);
+
+  // the download button on the landing page points at the published zip
+  const landing = await read('index.html');
+  assert.match(landing, /href="kryptboard-latest\.zip"/);
+  assert.match(workflow, /kryptboard-latest\.zip/);
+});

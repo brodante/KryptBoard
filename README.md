@@ -2,6 +2,11 @@
 
 A secure Android keyboard built with Kotlin, Jetpack Compose, and Material 3.
 
+> **Live demo (GitHub Pages):** `https://brodante.github.io/KryptBoard/` — the browser build's
+> keyboard running on a normal web page, with the *Download the extension* button. It is
+> published by [`.github/workflows/pages.yml`](.github/workflows/pages.yml); enable
+> *Settings → Pages → Source: GitHub Actions* once and every push to `main` redeploys it.
+
 > **Browser build:** [`web-extension/`](web-extension/) contains KryptBoard as a
 > Manifest V3 browser extension — the same buffered-keystroke design and the same
 > `v1|alg|nonce|ct|tag` envelope, so ciphertext is interchangeable between the phone and
