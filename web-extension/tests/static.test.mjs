@@ -112,6 +112,22 @@ test('the overlay has no external dependencies and no remote assets', async () =
   assert.deepEqual(Object.keys(pkg.dependencies || {}), [], 'the extension must ship with zero runtime dependencies');
 });
 
+test('elements toggled with the hidden attribute are really hidden, and the host resists page CSS', async () => {
+  const css = await read('src/keyboard.css');
+  const js = await read('src/keyboard.js');
+
+  // The JS toggles visibility by setting `.hidden`; author `display:` rules beat
+  // the UA stylesheet regardless of specificity, so the sheet must cover it.
+  const toggled = new Set([...js.matchAll(/refs\.([A-Za-z]+)\.hidden\s*=/g)].map((m) => m[1]));
+  assert.ok(toggled.size >= 4, `expected several elements to be toggled via .hidden, found ${[...toggled].join(', ')}`);
+  assert.match(css, /\[hidden\][^{}]*\{[^}]*display:\s*none\s*!important/, 'the sheet must hide [hidden] elements explicitly');
+
+  // A page must not be able to collapse or bury the overlay with its own CSS.
+  assert.match(css, /:host\s*\{[^}]*position:\s*fixed\s*!important/);
+  assert.match(css, /:host\s*\{[^}]*z-index:\s*\d+\s*!important/);
+  assert.match(css, /:host\s*\{[^}]*display:\s*flex\s*!important/);
+});
+
 test('the plaintext buffer lives in a closed shadow root', async () => {
   const code = await read('src/keyboard.js');
   assert.match(code, /attachShadow\(\s*\{\s*mode:\s*'closed'\s*\}\s*\)/);

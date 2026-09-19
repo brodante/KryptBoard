@@ -6,21 +6,40 @@
  * around it.
  */
 
+/*
+ * !important on the host geometry is deliberate: this overlay is meant to be
+ * un-hideable by the page it is serving, so page rules (even !important ones
+ * of equal weight) must not be able to collapse or bury it.
+ */
 :host {
   all: initial;
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 2147483647;
-  display: flex;
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  top: auto !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  transform: none !important;
   justify-content: center;
   pointer-events: none;
   contain: layout style;
 }
 
 :host([hidden]) {
-  display: none;
+  display: none !important;
+}
+
+/*
+ * Author rules override the UA stylesheet's `[hidden] { display: none }`
+ * regardless of specificity, so any rule below that sets `display` must also
+ * cover the hidden state explicitly — otherwise the element would never hide.
+ */
+.kb[hidden],
+.kb [hidden] {
+  display: none !important;
 }
 
 .kb {
