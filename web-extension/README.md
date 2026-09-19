@@ -1,4 +1,4 @@
-# KryptBoard — Encrypted Keyboard for the Browser
+# KryptBoard Encrypted Keyboard for the Browser
 
 A browser extension that reproduces the **KryptBoard / Secure IME** idea on the web: an
 on-screen keyboard overlay that *buffers* keystrokes instead of handing them to the page,
@@ -19,8 +19,8 @@ Paper Algorithm 1 dictionary (the session-key model)
 {"nonce":"…","ciphertext":"…","tag":"…"}                    (standard base64, padded)
 ```
 
-The paper's construction — the single-session key, Algorithm 1's `{nonce, ciphertext, tag}`
-dictionary and Algorithm 2's verify-then-decrypt — is implemented in full; the passphrase
+The paper's construction - the single-session key, Algorithm 1's `{nonce, ciphertext, tag}`
+dictionary and Algorithm 2's verify-then-decrypt - is implemented in full; the passphrase
 model is kept alongside it because it is what the Android app shares.
 **[Section "Matching the paper exactly"](#matching-the-paper-exactly)** maps every
 requirement of the paper to the file that implements it, including the two deliberate
@@ -63,13 +63,13 @@ algorithm and deviation to the file that implements it, and
 
 ## Install it
 
-No build step is required to load it — `bundle/content.js` is committed and current.
+No build step is required to load it - `bundle/content.js` is committed and current.
 
 1. Open `chrome://extensions` (or `edge://extensions`, `brave://extensions`).
 2. Turn on **Developer mode**.
 3. **Load unpacked** → select this folder (`web-extension/`).
 4. Open any normal website (not a `chrome://` page), focus a text box, and press
-   **Ctrl+Shift+K** — or click the extension icon and press *Open keyboard*.
+   **Ctrl+Shift+K** - or click the extension icon and press *Open keyboard*.
 
 After editing any file under `src/`, rebuild the content bundle:
 
@@ -91,7 +91,7 @@ dependencies**.
 | Commit | `commitText(envelope)` via `InputConnection` | native value setter + `InputEvent` (or `execCommand('insertText')`) |
 | Target tracking | system gives the IME the target | `focusin` tracking, password fields excluded |
 | Cipher | ChaCha20-Poly1305 (stub in the current Kotlin tree) | RFC 8439 ChaCha20-Poly1305, real AEAD |
-| Key material | local, no network | local, in `chrome.storage.session` at most — never on disk |
+| Key material | local, no network | local, in `chrome.storage.session` at most - never on disk |
 | Network | none | none (the manifest has no host permissions at all) |
 
 Concretely, the extension gives you:
@@ -99,8 +99,8 @@ Concretely, the extension gives you:
 - **An overlay keyboard** with letters/symbols layers, one-shot and locked shift, space,
   backspace and enter, dark/light/auto themes, and a live character/byte counter.
 - **Two modes**, switchable at any time, with an always-visible badge for the active one.
-- **⌨ Capture** — a toggle in the overlay's toolbar (and a checkbox in the popup) that routes
-  real keystrokes — including an external keyboard's — into the buffer instead of the page, so
+- **⌨ Capture** - a toggle in the overlay's toolbar (and a checkbox in the popup) that routes
+  real keystrokes - including an external keyboard's - into the buffer instead of the page, so
   they appear in the overlay and nowhere else. It only acts while the overlay is open, ignores
   events a page script synthesised, never buffers password fields, and leaves browser shortcuts,
   arrows and Tab alone.
@@ -129,7 +129,7 @@ ct, tag = ChaCha20-Poly1305(key, nonce, plaintext, aad = context label)
 
 - **AEAD.** ChaCha20-Poly1305 exactly as specified in RFC 8439 (§2.6 one-time key, §2.8 MAC
   over `aad ‖ pad ‖ ct ‖ pad ‖ len(aad) ‖ len(ct)`). Implemented in portable JavaScript in
-  `src/crypto.js` — no WebCrypto dependency, so behaviour is identical in every browser and
+  `src/crypto.js` - no WebCrypto dependency, so behaviour is identical in every browser and
   testable in Node.
 - **KDF.** HKDF-SHA256 with the nonce as salt and the string above as `info`. Supported by
   HMAC-SHA256 and SHA-256 implementations validated against RFC 4231 / FIPS 180-4 vectors.
@@ -165,12 +165,12 @@ machine.
 |---|---|
 | The page never receives plaintext in encrypted mode | Only the sealed envelope is committed to the field; keystrokes go to the overlay buffer. |
 | The page cannot read the buffer | The overlay lives in a **closed** shadow root; `host.shadowRoot` is `null` and the internals are unreachable from page scripts. A test asserts the closed mode. |
-| The page never sees the passphrase | It lives in the content script's closure, or in `chrome.storage.session` when *remember* is ticked — extension-only storage the page cannot address. Nothing touches `localStorage`. It is written there only when you finish editing the field (blur, Enter, or a seal), never as a half-typed prefix. |
+| The page never sees the passphrase | It lives in the content script's closure, or in `chrome.storage.session` when *remember* is ticked - extension-only storage the page cannot address. Nothing touches `localStorage`. It is written there only when you finish editing the field (blur, Enter, or a seal), never as a half-typed prefix. |
 | Credentials are not hoovered up | Password fields are excluded as commit targets by default (`ignorePasswordFields`); a test drives a password field and asserts it stays empty. |
 | Ciphertext cannot be forged or silently altered | ChaCha20-Poly1305 tags; a tampered envelope raises an authentication error rather than returning garbage. |
-| Nothing is transmitted | The manifest requests only `storage`, declares no host permissions, and the source contains no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or `eval` — enforced by tests that read the shipped sources. The popup shows a “0 network calls” badge. |
+| Nothing is transmitted | The manifest requests only `storage`, declares no host permissions, and the source contains no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or `eval` - enforced by tests that read the shipped sources. The popup shows a “0 network calls” badge. |
 | Keystrokes are not replayable across contexts | The optional context label is mixed into both the KDF `info` and the AEAD associated data. |
-| Keystrokes never reach the page at all (⌨ Capture on) | The page-level listener runs in the capture phase, calls `preventDefault()` + `stopPropagation()`, and the keystroke lands in the overlay buffer — the page's own listeners never see it. Only trusted events are captured, so a page script cannot type into the buffer, and a focused password field keeps its keys. |
+| Keystrokes never reach the page at all (⌨ Capture on) | The page-level listener runs in the capture phase, calls `preventDefault()` + `stopPropagation()`, and the keystroke lands in the overlay buffer - the page's own listeners never see it. Only trusted events are captured, so a page script cannot type into the buffer, and a focused password field keeps its keys. |
 
 **Residual risks the paper lists, and where we stand**
 
@@ -179,15 +179,15 @@ machine.
 | A fully compromised browser or OS can intercept keystrokes before the extension sees them | Out of scope, as in the paper. Pre-send encryption defends against page-level and extension-level threats, not a hostile kernel or a compromised browser binary. |
 | A malicious extension installed *before* KryptBoard could capture input | Same scope limit. Note the asymmetry: with Encrypt mode the only thing a page-reading extension receives is ciphertext, but it can still read the *overlay's* on-screen key labels and timing. |
 | The user may forget to switch to Encrypt mode | Mitigated, not solved: the mode is shown in the toolbar switch, in the overlay's header chip and in its colour, and `Encrypt mode` is the default (`startMode`). |
-| Traffic analysis — timing and message length stay visible | True here too. The envelope's length reveals the plaintext's length (base64 expansion ≈ 1.37×) and typing rhythm is unchanged. Padding is future work. |
+| Traffic analysis - timing and message length stay visible | True here too. The envelope's length reveals the plaintext's length (base64 expansion ≈ 1.37×) and typing rhythm is unchanged. Padding is future work. |
 
 **Two operating modes, two levels of isolation**
 
 1. **In-page overlay** (default). Convenient: it works in any field on any site. The
    plaintext is typed into the page's own document tree, inside a closed shadow root, so page
-   scripts cannot read it — but the page still shares a process with the overlay, and it can
+   scripts cannot read it - but the page still shares a process with the overlay, and it can
    observe that key events were delivered to the overlay's host element *if you type on your
-   physical keyboard while the buffer has focus* — the overlay stops those events at its
+   physical keyboard while the buffer has focus* - the overlay stops those events at its
    shadow-root boundary, and with **⌨ Capture** on the keystroke is intercepted before any page
    listener runs, so the page never sees it at all. Prefer clicking the on-screen keys, or use
    the second mode, when the page is hostile.
@@ -202,7 +202,7 @@ machine.
 Being honest about where the guarantee stops matters more than the feature list:
 
 - **The overlay cannot hide the *existence* of input from the page.** Synthetic clicks and
-  focus changes are observable by design — only the buffer's *contents* are hidden. Use the
+  focus changes are observable by design - only the buffer's *contents* are hidden. Use the
   isolated composer when even that matters.
 - **Capture is opt-in and only while the overlay is open.** With ⌨ Capture off (the default)
   the physical keyboard belongs to the page, as before; with it on, keystrokes go to the
@@ -215,7 +215,7 @@ Being honest about where the guarantee stops matters more than the feature list:
 - **The passphrase is shared out of band.** There is no key agreement, no forward secrecy and
   no per-contact identity in this version: it is a symmetric AEAD with a pre-shared secret,
   matching the Android implementation. If the paper specifies X3DH/Signal-style ratcheting,
-  that is a different (larger) design — see the note above.
+  that is a different (larger) design - see the note above.
 - **A weak passphrase is weak.** HKDF is not a password-stretching function; enable PBKDF2
   hardening for anything human-chosen. The default remains plain HKDF so the browser and the
   Android `crypto-lib` stay byte-compatible.
@@ -244,7 +244,7 @@ web-extension/
 │   ├── content.js              chrome.storage + message API glue
 │   ├── popup.html/.css/.js     status, isolated composer, all settings
 ├── demo/demo.html              live demo of the real modules (see below)
-├── tests/                      ten suites, 140 tests — see “Tests” below
+├── tests/                      ten suites, 140 tests - see “Tests” below
 ├── scripts/bundler.mjs         ~120-line ES-module bundler (content scripts can't be modules)
 └── scripts/build.mjs           bundle → manifest check → optional .zip
 ```
@@ -284,7 +284,7 @@ const plaintext = await kbDecrypt(envelopeFromPhone, passphrase, { aad: '' });
 Both sides must agree on: the envelope layout, the KDF (`info` string and salt), the AEAD, and
 the context label. The repository's test suite pins the browser's half with golden vectors
 (`tests/crypto.test.mjs`) whose derived keys were recomputed independently with Python's
-`hashlib`/`hmac` — so the Kotlin implementation can be checked against those same vectors.
+`hashlib`/`hmac` - so the Kotlin implementation can be checked against those same vectors.
 
 ## Matching the paper exactly
 
@@ -294,25 +294,25 @@ the method; this is where each piece of it lives and how faithful the implementa
 
 | Paper requirement | Where it lives | Status |
 |---|---|---|
-| Keystrokes are captured in the extension's own (isolated) context, not the page's | `src/keyboard.js` (`captureKey`, the **⌨ Capture** toggle) + `src/wiring.js` page listener; `src/popup.html` checkbox for the persisted setting | ✅ implemented — opt-in, trusted events only, password fields excluded, `preventDefault` + `stopPropagation` so the page sees nothing |
-| Two modes, Plain and Encrypt, toggled from a persistent browser-toolbar UI | `src/popup.html` / `popup.js` — the *Plain mode* / *Encrypt mode* switch that drives the live overlay over the message API (`kryptboard:set-mode`); mode chips inside the overlay keep it visible while typing | ✅ implemented — the switch reflects the page's current mode, changes it live, and stores it as the default for the next page |
-| Keystrokes held in an isolated buffer, encrypted as one message on demand | `src/keyboard.js` — encrypted mode buffers; `Encrypt & Send` seals | ✅ implemented |
-| **Algorithm 1** — 12-byte random nonce, `ChaCha20-Poly1305(key_bytes, nonce).encrypt_and_digest(msg)`, result `{nonce, ciphertext, tag}` base64-encoded | `kbEncryptToDict` in `src/crypto.js` | ✅ implemented byte-for-byte: standard base64 **with** padding, exactly the fields the paper names |
-| **Algorithm 2** — decode the three base64 components, `decrypt_and_verify`, fail on a bad tag | `kbDecryptFromDict` | ✅ implemented; a failed tag raises `AUTH_FAILED` (the paper's `ValueError`) |
+| Keystrokes are captured in the extension's own (isolated) context, not the page's | `src/keyboard.js` (`captureKey`, the **⌨ Capture** toggle) + `src/wiring.js` page listener; `src/popup.html` checkbox for the persisted setting | ✅ implemented - opt-in, trusted events only, password fields excluded, `preventDefault` + `stopPropagation` so the page sees nothing |
+| Two modes, Plain and Encrypt, toggled from a persistent browser-toolbar UI | `src/popup.html` / `popup.js` - the *Plain mode* / *Encrypt mode* switch that drives the live overlay over the message API (`kryptboard:set-mode`); mode chips inside the overlay keep it visible while typing | ✅ implemented - the switch reflects the page's current mode, changes it live, and stores it as the default for the next page |
+| Keystrokes held in an isolated buffer, encrypted as one message on demand | `src/keyboard.js` - encrypted mode buffers; `Encrypt & Send` seals | ✅ implemented |
+| **Algorithm 1** - 12-byte random nonce, `ChaCha20-Poly1305(key_bytes, nonce).encrypt_and_digest(msg)`, result `{nonce, ciphertext, tag}` base64-encoded | `kbEncryptToDict` in `src/crypto.js` | ✅ implemented byte-for-byte: standard base64 **with** padding, exactly the fields the paper names |
+| **Algorithm 2** - decode the three base64 components, `decrypt_and_verify`, fail on a bad tag | `kbDecryptFromDict` | ✅ implemented; a failed tag raises `AUTH_FAILED` (the paper's `ValueError`) |
 | Ciphertext injected into the web app's own text field, no site modifications | `commitToPage` (`kbCommitToTarget`) | ✅ implemented; works on `input`, `textarea` and `contenteditable` |
 | Single-session key generated and managed locally in extension storage, no key exchange in the PoC | `kbGenerateSessionKey`, `kbCreateSessionKeyVault`, `src/content.js` (in-memory), popup *Session key* card | ✅ implemented as the `session` key model; the key can be shared out of band as a `kbk1.…` string and verified by fingerprint |
-| Immediate zeroization of the plaintext buffer after encryption or on cancel | `kbZeroizeBytes` + `kbZeroizeBytes`/scratch handling in every encrypt path; buffer and textarea wiped on send, cancel and hide | ✅ implemented for every byte buffer we own — see the caveat below |
+| Immediate zeroization of the plaintext buffer after encryption or on cancel | `kbZeroizeBytes` + `kbZeroizeBytes`/scratch handling in every encrypt path; buffer and textarea wiped on send, cancel and hide | ✅ implemented for every byte buffer we own - see the caveat below |
 | Plaintext never visible to the page | closed shadow root + content-script closure; keystroke/input/composition/paste events stopped at the shadow boundary | ✅ implemented, with tests |
 | No clipboard use for sensitive data unless the user asks | clipboard is touched only by explicit Copy/Paste buttons, and the seal-with-no-target fallback copies **ciphertext** | ✅ implemented |
 | Recipient-side client to decrypt | the popup's *Decrypt* tab (standalone tool for envelopes **and** Algorithm-1 dictionaries) plus the in-page overlay | ✅ implemented |
-| Performance: negligible encryption overhead, linear in message length | `npm run bench` | ✅ measured, with a caveat — see [Performance](#performance) |
+| Performance: negligible encryption overhead, linear in message length | `npm run bench` | ✅ measured, with a caveat - see [Performance](#performance) |
 
 Two deliberate deviations, both to keep the wire format interoperable:
 
 1. **Envelopes stay base64url, dictionaries use standard base64.** The paper's Algorithm 1
    returns `base64.b64encode` output, and `kbEncryptToDict` matches it exactly. The
-   `v1|alg|nonce|ct|tag` envelope — which the Android IME and the golden interop vectors
-   use — keeps the unpadded URL-safe alphabet so a single string survives being pasted
+   `v1|alg|nonce|ct|tag` envelope - which the Android IME and the golden interop vectors
+   use - keeps the unpadded URL-safe alphabet so a single string survives being pasted
    into a URL, a JSON field or a chat box. Both are implemented; the session model can
    emit either (`Session output` in the popup, `sessionFormat` in settings).
 2. **A passphrase key model is kept alongside the paper's raw-key model.** The paper's
@@ -334,11 +334,11 @@ overlay buffer ──▶ kbEncryptToDict(msg, key) ──▶ {"nonce":"…","cip
 
 - The key is 32 random bytes. The popup keeps it in `chrome.storage.session`
   (extension-only, cleared when the browser session ends) and hands it to the page's
-  content script over the message API; the content script holds it **in memory only** —
+  content script over the message API; the content script holds it **in memory only** -
   it is never written to `sync`/`local` storage, and the previous key is overwritten with
   zeros when it is replaced or cleared.
 - **Share** it with the other side as `kbk1.<base64url>` (the popup has a *Copy sharing
-  string* button). Anyone holding that string can read the messages — send it over a
+  string* button). Anyone holding that string can read the messages - send it over a
   different channel.
 - Both sides compare the **fingerprint** (e.g. `A1B2-C3D4-E5F6-0718`, the first 8 bytes of
   SHA-256 of the key) out of band before trusting the channel.
@@ -359,7 +359,7 @@ The paper requires the plaintext buffer to be overwritten the moment it is not n
 | Browser session end | `chrome.storage.session` is dropped by the browser |
 
 **Caveat, stated plainly:** JavaScript strings are immutable. Once the buffer has been read
-into a string by the engine, that particular copy cannot be overwritten — only dropped for
+into a string by the engine, that particular copy cannot be overwritten - only dropped for
 the garbage collector. Every *byte buffer* this extension owns is zeroed, and callers can
 pass `options.scratch` to `kbEncrypt`/`kbEncryptToDict`/`kbDecryptFromDict` to keep the
 plaintext in memory they control; a test asserts the scratch is all zeros afterwards. A
@@ -369,7 +369,7 @@ byte-exact zeroization guarantee would need a WASM memory region, which is futur
 
 Measured with `npm run bench` (`--json` for machines), node v22, single core, no hardware
 acceleration. The paper reports roughly **450 MB/s** for ChaCha20-Poly1305 and overhead that
-is negligible and linear in message length — measured on a **native** build. This extension
+is negligible and linear in message length - measured on a **native** build. This extension
 ships a **portable pure-JS** AEAD (no WASM, no dependencies, byte-identical on every
 browser), so the honest numbers are these:
 
@@ -387,11 +387,11 @@ optional work factor, by design). A 500-character message therefore costs **~0.3
 end in the passphrase model and **~0.07 ms** of pure AEAD in the paper's session-key model.
 
 - **"Negligible overhead" holds.** Even the hardened passphrase path finishes in well under
-  one frame, and nothing is derived per keystroke — encryption happens once, when the user
+  one frame, and nothing is derived per keystroke - encryption happens once, when the user
   asks for it. A person types ~5 characters/second, so the cipher is never the bottleneck.
 - **Growth is linear, with a fixed setup cost.** Per-byte cost is highest for the smallest
   message (fixed key setup) and flattens from 16 KiB on; the 1 MiB row drops again because
-  building a 1.4 MB base64 string — not the cipher — dominates at that size.
+  building a 1.4 MB base64 string - not the cipher - dominates at that size.
   `tests/bench.test.mjs` fails if the cost class ever changes.
 - **Wire expansion is 1.48×** (base64 plus the 12-byte nonce and 16-byte tag), matching what
   the paper's figures imply; the Algorithm-1 dictionary is 6 characters larger for the same
@@ -399,7 +399,7 @@ end in the passphrase model and **~0.07 ms** of pure AEAD in the paper's session
 - **Throughput is not the paper's ~450 MB/s.** The portable Poly1305 accumulator is the
   bottleneck. Two ways to close the gap, if a workload ever needs it: a 32-bit-limb Poly1305
   (~10×, still pure JS), or `crypto.subtle` where the browser exposes ChaCha20-Poly1305
-  (Firefox and Safari do; Chromium and Node's WebCrypto do not — which is exactly why the
+  (Firefox and Safari do; Chromium and Node's WebCrypto do not - which is exactly why the
   portable path is the default).
 - **Zeroization is free**: wiping a 1.5 KB buffer measures ~0.001 ms.
 
@@ -425,28 +425,28 @@ npm run build -- --check   # fail if bundle/content.js is stale
 | `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
 | `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |
 | `static.test.mjs` | 16 | packaging, permissions, no-network (author links excluded from the asset scan), markup/script cross-checks, the `[hidden]` CSS guard, the author watermark and paper DOI on every surface, `CITATION.cff`, the GitHub Pages workflow (permissions, staged files, step order, stale-bundle gate) |
-| `pages-workflow.test.mjs` | 4 | the Pages preflight step's shell script, extracted from the YAML and executed against a fake Pages API: not enabled (404), set to deploy from a branch (`build_type: legacy`), set to GitHub Actions, and a token that cannot read the setting — each asserted on its message, not just its exit code |
+| `pages-workflow.test.mjs` | 4 | the Pages preflight step's shell script, extracted from the YAML and executed against a fake Pages API: not enabled (404), set to deploy from a branch (`build_type: legacy`), set to GitHub Actions, and a token that cannot read the setting - each asserted on its message, not just its exit code |
 | `demo.test.mjs` | 6 | the demo page loads the real modules and round-trips, including the paper's session-key panel (generate, fingerprint, Algorithm 1 dictionary, Algorithm 2 decryption, the wipe on *Forget*) and the ⌨ Capture toggle driving a physical keystroke into the buffer |
 
 What is actually verified, not merely claimed:
 
-- **Primitives against their standards** — ChaCha20 block function, ChaCha20 encryption,
+- **Primitives against their standards** - ChaCha20 block function, ChaCha20 encryption,
   Poly1305 and the full ChaCha20-Poly1305 AEAD against RFC 8439's published vectors; HKDF
   against RFC 5869 A.1–A.3; HMAC against RFC 4231; SHA-256 against FIPS 180-4; PBKDF2 against
   RFC 7914 §11.
-- **The KDF chain against a second implementation** — the derived keys for a fixed nonce,
+- **The KDF chain against a second implementation** - the derived keys for a fixed nonce,
   passphrase and context label were recomputed with Python's `hashlib`/`hmac` and are pinned
   as golden vectors.
-- **Behaviour through the shipped artefact** — the DOM suite bundles `src/`, evaluates it in
+- **Behaviour through the shipped artefact** - the DOM suite bundles `src/`, evaluates it in
   jsdom with a stubbed `chrome` API, presses the hotkey, clicks keys and asserts: the page
   field receives only `v1|CHACHA20-POLY1305|…`, the buffer is wiped after sealing, an envelope
   pasted into the buffer decrypts, a tampered one fails, password fields stay empty, the
   shadow root is closed, settings propagate live, keystrokes typed into the overlay never
   reach page listeners, and no network API is ever called.
-- **The build itself** — the bundle is compared byte-for-byte with a fresh build, a tampered
+- **The build itself** - the bundle is compared byte-for-byte with a fresh build, a tampered
   copy is proven to fail `--check`, a broken manifest is proven to be rejected, and the store
   zip is asserted to contain the runtime files and none of the development ones.
-- **Packaging** — manifest version matches `package.json`, every referenced file exists, icons
+- **Packaging** - manifest version matches `package.json`, every referenced file exists, icons
   are real PNGs of the declared size, no remote assets, no `eval`, and every settings control
   the popup touches exists in its markup.
 
@@ -467,7 +467,7 @@ python3 -m http.server 8787        # then open http://localhost:8787/demo/demo.h
 
 ## Host it (GitHub Pages)
 
-The same folder is a static site — no server code, no build step at runtime — so GitHub Pages
+The same folder is a static site - no server code, no build step at runtime - so GitHub Pages
 can publish it as-is. `.github/workflows/pages.yml` does exactly that on every push to `main`:
 
 1. **Turn Pages on once:** repository → *Settings* → *Pages* → **Source: GitHub Actions**.
@@ -477,7 +477,7 @@ can publish it as-is. `.github/workflows/pages.yml` does exactly that on every p
    allowed it stops with a link to that exact settings page instead of an opaque API error.
 2. **Push to `main`** (or run the workflow from the *Actions* tab → *Deploy demo to GitHub
    Pages* → *Run workflow*).
-3. The site appears at **`https://<owner>.github.io/<repo>/`** — for this repository,
+3. The site appears at **`https://<owner>.github.io/<repo>/`** - for this repository,
    `https://brodante.github.io/KryptBoard/`.
 
 What gets published: `index.html`, `demo/`, the real `src/` modules, the `bundle/`, the icons,
@@ -498,11 +498,11 @@ Pages has exactly two repository-level settings that can stop a workflow deploy,
 | Pages has never been enabled (`404`) | fails with *“GitHub Pages is not enabled”* and links `…/settings/pages` |
 | Pages deploys from a branch, i.e. `build_type: legacy` | fails naming the `build_type`, and says to change **Source → GitHub Actions** |
 | `build_type: workflow` | continues |
-| the token cannot read the setting (`403`) | warns and continues — an unreadable setting is not proof of a misconfiguration |
+| the token cannot read the setting (`403`) | warns and continues - an unreadable setting is not proof of a misconfiguration |
 
 Both failures also write the full fix into the run's **summary** page, so the explanation is
 visible without digging into the logs. The step's shell is exercised by
-`tests/pages-workflow.test.mjs` against all four states — including the `set -o pipefail` +
+`tests/pages-workflow.test.mjs` against all four states - including the `set -o pipefail` +
 `grep` trap that would otherwise abort the script before it could explain itself.
 
 Everything on the page uses relative links, so it works unchanged from the `/KryptBoard/`
