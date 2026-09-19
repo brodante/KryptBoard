@@ -339,3 +339,35 @@ test('a save during a pending load also wins', async () => {
   assert.equal(store.get().theme, 'dark', 'local intent beats stale storage');
   assert.equal(stored['kryptboard:settings'].theme, 'dark');
 });
+
+test('the vault can tell its own storage echo apart from another context writing', async () => {
+  const writes = [];
+  const sessionArea = {
+    async get() { return {}; },
+    async set(items) { writes.push({ set: items }); },
+    async remove(keys) { writes.push({ remove: [].concat(keys) }); }
+  };
+  const vault = kbCreatePassphraseVault({ sessionArea });
+
+  // nothing written yet: an external write must not be mistaken for our echo
+  assert.equal(vault.lastWritten(), null, 'a fresh vault has not written anything');
+
+  // remember off: the key is removed, and its echo is recognisable as ours
+  await vault.set('typed-by-the-user', false);
+  assert.equal(vault.lastWritten(), '', 'removing the key is recorded');
+  assert.deepEqual(writes.pop(), { remove: ['kryptboard:passphrase'] });
+
+  // remember on: the stored value is the echo we expect
+  await vault.set('typed-by-the-user', true);
+  assert.equal(vault.lastWritten(), 'typed-by-the-user');
+  assert.deepEqual(writes.pop(), { set: { 'kryptboard:passphrase': 'typed-by-the-user' } });
+
+  // clearing records the removal too
+  await vault.clear();
+  assert.equal(vault.lastWritten(), '');
+  assert.deepEqual(writes.pop(), { remove: ['kryptboard:passphrase'] });
+
+  // an empty set is a removal as well
+  await vault.set('', true);
+  assert.equal(vault.lastWritten(), '');
+});

@@ -560,10 +560,19 @@ export function kbCreateKeyboard(options = {}) {
     refs.target.classList.toggle('is-empty', !state.target);
   }
 
+  /**
+   * Shows or hides the passphrase row.
+   *
+   * Visibility is driven by whether a passphrase has actually been *set* — one
+   * loaded from the vault or committed by the user — never by the fact that the
+   * field currently holds text. Keying it off the live value used to hide the
+   * row on the first keystroke, which swallowed the rest of what the user was
+   * typing (the field disappeared mid-word).
+   */
   function renderPassphrase() {
-    const has = refs.pass.value.length > 0;
-    refs.passRow.hidden = !(state.mode === 'encrypted' && (!has || passRowForced));
-    refs.root.classList.toggle('kb-needs-pass', state.mode === 'encrypted' && !has);
+    const committed = state.passLoaded === true;
+    refs.passRow.hidden = !(state.mode === 'encrypted' && (!committed || passRowForced));
+    refs.root.classList.toggle('kb-needs-pass', state.mode === 'encrypted' && !committed && !refs.pass.value);
     refs.remember.checked = state.rememberPassphrase === true;
   }
 
@@ -950,6 +959,7 @@ export function kbCreateKeyboard(options = {}) {
       }
 
       if (committed) {
+        if (!useSessionKey) rememberTypedPassphrase();
         setStatus(
           `Sealed ${described.plaintextBytes} B → ${described.envelopeBytes} B ${payload.label} and committed it. Buffer wiped.`,
           'ok'
@@ -1034,6 +1044,7 @@ export function kbCreateKeyboard(options = {}) {
       state.buffer = plaintext;
       refs.buffer.value = plaintext;
       updateCount();
+      if (!needsSessionKey) rememberTypedPassphrase();
       setStatus(
         `AEAD tag verified ✓ — ${plaintext.length} characters recovered from a ${ciphertextBytes} B ciphertext${needsSessionKey ? ` (session key ${sessionFingerprint() || 'unknown'})` : ''}.`,
         'ok'
@@ -1316,15 +1327,46 @@ export function kbCreateKeyboard(options = {}) {
     if (!interactive) event.preventDefault();
   }
 
+  /**
+   * Typing a passphrase must feel like typing anywhere else: the row stays put
+   * and nothing is handed to storage until the value is finished. Persisting on
+   * every keystroke also meant writing one- and two-character *prefixes* of the
+   * secret into chrome.storage.session when "remember" was ticked.
+   */
   function onPassInput() {
+    renderPassphrase();
+  }
+
+  /** The user finished editing the field (blur, or Enter). Now it is committed. */
+  function onPassChange() {
+    const value = refs.pass.value;
+    state.passLoaded = value.length > 0;
+    // the row only stays out of the way once there is something to keep
+    if (value) passRowForced = false;
     persistPassphrase();
     renderPassphrase();
-    if (refs.pass.value) passRowForced = false;
+    setStatus(
+      value
+        ? `Passphrase set (${value.length} characters) — it stays ${refs.remember.checked === true ? 'in this tab' : 'in memory'} and is never written to disk.`
+        : 'Passphrase cleared.',
+      value ? 'info' : 'warn'
+    );
   }
 
   function onRememberChange() {
     state.rememberPassphrase = refs.remember.checked === true;
     persistPassphrase();
+  }
+
+  /**
+   * Keeps the vault in step when a seal or an open used the passphrase the user
+   * typed without ever leaving the field (Ctrl+Enter straight after typing).
+   */
+  function rememberTypedPassphrase() {
+    if (!refs.pass.value) return;
+    state.passLoaded = true;
+    persistPassphrase();
+    renderPassphrase();
   }
 
   root.addEventListener('mousedown', onHostMouseDown);
@@ -1333,6 +1375,7 @@ export function kbCreateKeyboard(options = {}) {
   refs.buffer.addEventListener('input', onBufferInput);
   refs.buffer.addEventListener('keydown', onBufferKeydown);
   refs.pass.addEventListener('input', onPassInput);
+  refs.pass.addEventListener('change', onPassChange);
   refs.remember.addEventListener('change', onRememberChange);
 
   /* ------------------------- open / close ------------------------ */

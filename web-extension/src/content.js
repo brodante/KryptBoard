@@ -150,7 +150,12 @@ import { kbWireKeyboard } from './wiring.js';
       }
       if (areaName === 'session' && changes['kryptboard:passphrase']) {
         const value = changes['kryptboard:passphrase'].newValue;
-        wired.keyboard.setPassphrase(typeof value === 'string' ? value : '');
+        const incoming = typeof value === 'string' ? value : '';
+        // Ignore the echo of this vault's own write. Without this, storing a
+        // passphrase with "remember" off removes the session key, the echo
+        // arrives as an empty value, and the overlay wipes the very field the
+        // user is typing into.
+        if (incoming !== vault.lastWritten()) wired.keyboard.setPassphrase(incoming);
       }
     });
   }

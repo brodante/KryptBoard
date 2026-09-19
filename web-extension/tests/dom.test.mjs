@@ -1118,3 +1118,109 @@ test('the capture toggle is reachable from the popup message API', { skip }, asy
   await harness.waitFor(() => harness.shadowQuery('[data-act="capture"]').getAttribute('aria-pressed') === 'false');
   assert.equal((await harness.sendMessage({ type: 'kryptboard:ping' })).capturingKeys, false);
 });
+
+/* ------------------------------------------------------------------ */
+/* the passphrase field must behave like a text field                  */
+/* ------------------------------------------------------------------ */
+
+test('typing a passphrase keeps the field on screen and stores only the finished value', { skip }, async () => {
+  const harness = await createHarness(); // no passphrase anywhere yet
+  harness.pressHotkey();
+  await harness.waitFor(() => harness.isVisible());
+
+  const row = harness.shadowQuery('[data-role="pass-row"]');
+  const pass = harness.shadowQuery('[data-role="pass"]');
+  const remember = harness.shadowQuery('[data-role="remember"]');
+  assert.equal(row.hidden, false, 'the passphrase row is offered while none is set');
+
+  // the user asked for it to be remembered, so a premature save would be visible
+  remember.checked = true;
+  remember.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+
+  pass.focus();
+  for (const ch of 'password') {
+    pass.value += ch;
+    pass.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+    assert.equal(row.hidden, false, `the passphrase row vanished after typing "${ch}"`);
+    assert.equal(pass.value, 'password'.slice(0, pass.value.length), 'the field keeps what was typed');
+    // partial secrets must not reach storage at any point
+    assert.equal(harness.chromeStub.session.has('kryptboard:passphrase'), false, `"${pass.value}" reached session storage`);
+  }
+  assert.equal(pass.value, 'password');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, '', 'the passphrase never lands in the plaintext buffer');
+
+  // committing the field (blur or Enter) is what stores it
+  pass.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.waitFor(() => harness.chromeStub.session.get('kryptboard:passphrase') === 'password');
+  assert.equal(row.hidden, true, 'once set, the row stops taking up space');
+
+  // re-opening the row to change the passphrase works the same way
+  harness.shadowQuery('[data-act="passphrase"]').click();
+  assert.equal(row.hidden, false, 'the Passphrase button brings the row back');
+  pass.value = 'password2';
+  pass.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  assert.equal(row.hidden, false, 'still visible while it is being edited');
+  pass.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  assert.equal(row.hidden, true, 'committing the edit closes the row again');
+  await harness.waitFor(() => harness.chromeStub.session.get('kryptboard:passphrase') === 'password2');
+
+  // and the typed passphrase really is the one used to seal
+  const { kbDecrypt } = await import('../src/crypto.js');
+  harness.focusField('msg');
+  harness.typeBuffer('hello');
+  harness.shadowQuery('[data-act="send"]').click();
+  await harness.waitFor(() => harness.document.getElementById('msg').value.startsWith('v1|'));
+  assert.equal(await kbDecrypt(harness.document.getElementById('msg').value, 'password2'), 'hello');
+});
+
+test('an unremembered passphrase stays in memory and reopens the row only when cleared', { skip }, async () => {
+  const harness = await createHarness();
+  harness.pressHotkey();
+  await harness.waitFor(() => harness.isVisible());
+
+  const row = harness.shadowQuery('[data-role="pass-row"]');
+  const pass = harness.shadowQuery('[data-role="pass"]');
+  pass.focus();
+  pass.value = 'in-memory-only';
+  pass.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  pass.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+
+  assert.equal(harness.chromeStub.session.has('kryptboard:passphrase'), false, 'remember is off: nothing is written to storage');
+  assert.equal(row.hidden, true);
+
+  // hiding and reopening the overlay must not wipe or leak what was typed
+  harness.pressHotkey();
+  await harness.waitFor(() => !harness.isVisible());
+  harness.pressHotkey();
+  await harness.waitFor(() => harness.isVisible());
+  assert.equal(harness.shadowQuery('[data-role="pass"]').value, 'in-memory-only');
+
+  // clearing it from the popup brings the row back
+  await harness.sendMessage({ type: 'kryptboard:clear-passphrase' });
+  assert.equal(harness.shadowQuery('[data-role="pass"]').value, '');
+  assert.equal(harness.shadowQuery('[data-role="pass-row"]').hidden, false);
+});
+
+test('physical keys typed into the passphrase row are never stolen by capture', { skip: skipTrust }, async () => {
+  const harness = await createHarness();
+  harness.pressHotkey();
+  await harness.waitFor(() => harness.isVisible());
+  harness.shadowQuery('[data-act="capture"]').click(); // ⌨ Capture on
+  assert.equal(harness.shadowQuery('[data-act="capture"]').getAttribute('aria-pressed'), 'true');
+
+  const pass = harness.shadowQuery('[data-role="pass"]');
+  assert.equal(harness.shadowQuery('[data-role="pass-row"]').hidden, false);
+  pass.focus();
+
+  // a real keystroke aimed at the passphrase field stays there
+  const event = physicalKey(harness.window, 'p');
+  pass.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, false, 'the passphrase field keeps its keystroke');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, '', 'nothing leaks into the plaintext buffer');
+
+  // the browser would insert it; do that part by hand and confirm the row survives
+  pass.value = 'p';
+  pass.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  assert.equal(harness.shadowQuery('[data-role="pass-row"]').hidden, false);
+  assert.equal(pass.value, 'p');
+});

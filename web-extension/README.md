@@ -164,7 +164,7 @@ machine.
 |---|---|
 | The page never receives plaintext in encrypted mode | Only the sealed envelope is committed to the field; keystrokes go to the overlay buffer. |
 | The page cannot read the buffer | The overlay lives in a **closed** shadow root; `host.shadowRoot` is `null` and the internals are unreachable from page scripts. A test asserts the closed mode. |
-| The page never sees the passphrase | It lives in the content script's closure, or in `chrome.storage.session` when *remember* is ticked — extension-only storage the page cannot address. Nothing touches `localStorage`. |
+| The page never sees the passphrase | It lives in the content script's closure, or in `chrome.storage.session` when *remember* is ticked — extension-only storage the page cannot address. Nothing touches `localStorage`. It is written there only when you finish editing the field (blur, Enter, or a seal), never as a half-typed prefix. |
 | Credentials are not hoovered up | Password fields are excluded as commit targets by default (`ignorePasswordFields`); a test drives a password field and asserts it stays empty. |
 | Ciphertext cannot be forged or silently altered | ChaCha20-Poly1305 tags; a tampered envelope raises an authentication error rather than returning garbage. |
 | Nothing is transmitted | The manifest requests only `storage`, declares no host permissions, and the source contains no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or `eval` — enforced by tests that read the shipped sources. The popup shows a “0 network calls” badge. |
@@ -405,9 +405,9 @@ end in the passphrase model and **~0.07 ms** of pure AEAD in the paper's session
 ## Tests
 
 ```bash
-npm test                   # everything: 181 tests across eleven suites
+npm test                   # everything: 185 tests across eleven suites
 npm run test:crypto        # 44 tests: primitives, envelope + dictionary, interop vectors, fuzzing
-npm run test:dom           # 40 tests: the built bundle inside a simulated page
+npm run test:dom           # 43 tests: the built bundle inside a simulated page
 npm run bench              # measured throughput / overhead / scaling
 npm run build -- --check   # fail if bundle/content.js is stale
 ```
@@ -415,8 +415,8 @@ npm run build -- --check   # fail if bundle/content.js is stale
 | suite | tests | what it pins down |
 | --- | ---: | --- |
 | `crypto.test.mjs` | 44 | RFC 8439 / 5869 / 4231 / 7914 vectors, the golden interop envelope, Algorithm 1/2 dictionaries (shape, padding, JSON round-trip, tampering, wrong key), session keys and fingerprints, zeroization, plus fuzzing: 250 random round-trips, every single-bit corruption of nonce/ciphertext/tag rejected, 80 structural mutilations classified, no plaintext or repeated nonce in 120 envelopes |
-| `dom.test.mjs` | 40 | the *built* bundle in jsdom driven like a user (hotkey → keys → Encrypt & Send), the paper's session-key sealing (dictionary and envelope output, refusal without a key, Algorithm-2 decryption of a pasted dictionary), physical-key **⌨ Capture** (keystrokes buffered and invisible to the page, synthetic events refused, password fields untouched), plus the editing primitives: maxlength, selection replacement, `beforeinput` cancellation, framework events, caret handling, clipboard copy/paste, shift lock, themes |
-| `settings.test.mjs` | 16 | frozen defaults, hostile input (prototype pollution, garbage types), hotkey parsing/matching, the store's load/save/reset/subscribe paths, the passphrase vault's memory-vs-remembered rules, and a change landing mid-load |
+| `dom.test.mjs` | 43 | the *built* bundle in jsdom driven like a user (hotkey → keys → Encrypt & Send), the paper's session-key sealing (dictionary and envelope output, refusal without a key, Algorithm-2 decryption of a pasted dictionary), physical-key **⌨ Capture** (keystrokes buffered and invisible to the page, synthetic events refused, password fields untouched), plus the editing primitives: maxlength, selection replacement, `beforeinput` cancellation, framework events, caret handling, clipboard copy/paste, shift lock, themes |
+| `settings.test.mjs` | 17 | frozen defaults, hostile input (prototype pollution, garbage types), hotkey parsing/matching, the store's load/save/reset/subscribe paths, the passphrase vault's memory-vs-remembered rules and its own-write tracking, and a change landing mid-load |
 | `wiring.test.mjs` | 15 | exact hotkey matching (near-miss combos, auto-repeat, disabled), target rules (readonly, `contenteditable`, buttons, selects), password exclusion and its opt-out, focus inside the overlay, the capture path (trusted events only, shortcuts/arrows/Tab left alone, settings push flips it live), teardown |
 | `content.test.mjs` | 13 | double injection, foreign/unknown messages, the popup message API (including the toolbar's mode switch), session-key hand-over and wiping, replies that wait for storage to load, and settings/passphrase pushes from other tabs |
 | `popup.test.mjs` | 16 | popup boot, the isolated composer (passphrase **and** session-key models, seal, verify, wrong passphrase, AAD, work factor), session-key generate/import/copy/forget, the toolbar Plain/Encrypt switch, the capture checkbox and the live ⌨ capture indicator, the footer watermark and author links, settings persistence, tabs, blocked pages, clipboard fallback |

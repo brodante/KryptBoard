@@ -258,6 +258,10 @@ export function kbCreatePassphraseVault(options = {}) {
   const key = options.key || KB_PASSPHRASE_KEY;
   let inMemory = '';
   let remembered = false;
+  // What this vault last put into (or removed from) the session area, so the
+  // storage-change listener can tell our own echo apart from another context's
+  // write. `null` means "this vault has not written anything yet".
+  let lastWritten = null;
 
   async function load() {
     if (!session) return inMemory;
@@ -282,8 +286,12 @@ export function kbCreatePassphraseVault(options = {}) {
     inMemory = typeof passphrase === 'string' ? passphrase : '';
     remembered = remember === true;
     if (!session) return;
+    const willStore = remembered && !!inMemory;
+    // recorded before the await: chrome.storage.onChanged can be delivered
+    // while the call is still in flight
+    lastWritten = willStore ? inMemory : '';
     try {
-      if (remembered && inMemory) await session.set({ [key]: inMemory });
+      if (willStore) await session.set({ [key]: inMemory });
       else await session.remove(key);
     } catch (e) {
       /* in-memory copy still works */
@@ -293,6 +301,7 @@ export function kbCreatePassphraseVault(options = {}) {
   async function clear() {
     inMemory = '';
     remembered = false;
+    lastWritten = '';
     if (session) {
       try {
         await session.remove(key);
@@ -308,7 +317,9 @@ export function kbCreatePassphraseVault(options = {}) {
     set,
     clear,
     has: () => inMemory.length > 0,
-    isRemembered: () => remembered
+    isRemembered: () => remembered,
+    /** The value this vault last wrote ('' when it removed the key, null before the first write). */
+    lastWritten: () => lastWritten
   };
 }
 
