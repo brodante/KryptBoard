@@ -91,6 +91,7 @@ async function refresh() {
   const tab = await activeTab();
   if (!tab || !tab.id) {
     setPageStatus('No active tab.', 'blocked');
+    $('toggle').disabled = true;
     return;
   }
   try {
@@ -122,7 +123,7 @@ async function onToggle() {
   try {
     const result = await chrome.tabs.sendMessage(tab.id, { type: 'kryptboard:toggle' });
     setPageStatus(result && result.open ? 'Keyboard opened.' : 'Keyboard hidden.', result && result.open ? 'open' : 'closed');
-    window.setTimeout(refresh, 120);
+    window.setTimeout(() => refresh().catch(() => {}), 120);
   } catch (error) {
     setPageStatus('Could not reach the page.', 'blocked', String(error && error.message ? error.message : error));
   }
@@ -134,7 +135,7 @@ async function onClearPassphrase() {
   try {
     await chrome.tabs.sendMessage(tab.id, { type: 'kryptboard:clear-passphrase' });
     setPageStatus('Passphrase cleared from this session.', 'closed');
-    window.setTimeout(refresh, 120);
+    window.setTimeout(() => refresh().catch(() => {}), 120);
   } catch (error) {
     /* ignore */
   }
@@ -270,4 +271,12 @@ async function boot() {
   await refresh();
 }
 
-boot();
+// A popup that fails to boot should leave a visible error, not a dead panel
+// and an unhandled rejection in the extension's console.
+boot().catch((error) => {
+  const status = document.getElementById('page-status');
+  if (status) {
+    status.className = 'status blocked';
+    status.textContent = `KryptBoard failed to start: ${(error && error.message) || error}`;
+  }
+});

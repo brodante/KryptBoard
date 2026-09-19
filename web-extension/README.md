@@ -189,10 +189,9 @@ web-extension/
 │   ├── content.js              chrome.storage + message API glue
 │   ├── popup.html/.css/.js     status, isolated composer, all settings
 ├── demo/demo.html              live demo of the real modules (see below)
-├── tests/crypto.test.mjs       RFC vectors + golden interop vectors
-├── tests/dom.test.mjs          the built bundle driven inside a simulated page
-├── tests/static.test.mjs       packaging, permissions, no-network, markup/script checks
-└── scripts/bundler.mjs         ~120-line ES-module bundler (content scripts can't be modules)
+├── tests/                      ten suites, 140 tests — see “Tests” below
+├── scripts/bundler.mjs         ~120-line ES-module bundler (content scripts can't be modules)
+└── scripts/build.mjs           bundle → manifest check → optional .zip
 ```
 
 Data flow, encrypted mode:
@@ -255,11 +254,24 @@ instead of a shared passphrase, or a different envelope separator), change it in
 ## Tests
 
 ```bash
-npm test              # all three suites (jsdom is a devDependency)
-npm run test:crypto   # 26 tests: primitives + envelope + interop vectors
-npm run test:dom      # 16 tests: the built bundle inside a simulated page
+npm test                   # everything: 140 tests across ten suites
+npm run test:crypto        # 32 tests: primitives, envelope, interop vectors, fuzzing
+npm run test:dom           # 32 tests: the built bundle inside a simulated page
 npm run build -- --check   # fail if bundle/content.js is stale
 ```
+
+| suite | tests | what it pins down |
+| --- | ---: | --- |
+| `crypto.test.mjs` | 32 | RFC 8439 / 5869 / 4231 / 7914 vectors, the golden interop envelope, plus fuzzing: 250 random round-trips, every single-bit corruption of nonce/ciphertext/tag rejected, 80 structural mutilations classified, no plaintext or repeated nonce in 120 envelopes |
+| `dom.test.mjs` | 32 | the *built* bundle in jsdom driven like a user (hotkey → keys → Encrypt & Send), plus the editing primitives: maxlength, selection replacement, `beforeinput` cancellation, framework events, caret handling, clipboard copy/paste, shift lock, themes |
+| `settings.test.mjs` | 16 | frozen defaults, hostile input (prototype pollution, garbage types), hotkey parsing/matching, the store's load/save/reset/subscribe paths, the passphrase vault's memory-vs-remembered rules, and a change landing mid-load |
+| `wiring.test.mjs` | 13 | exact hotkey matching (near-miss combos, auto-repeat, disabled), target rules (readonly, `contenteditable`, buttons, selects), password exclusion and its opt-out, focus inside the overlay, teardown |
+| `content.test.mjs` | 8 | double injection, foreign/unknown messages, the popup message API, replies that wait for storage to load, and settings/passphrase pushes from other tabs |
+| `popup.test.mjs` | 10 | popup boot, the isolated composer (seal, verify, wrong passphrase, AAD, work factor), settings persistence, tabs, blocked pages, clipboard fallback |
+| `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
+| `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |
+| `static.test.mjs` | 13 | packaging, permissions, no-network, markup/script cross-checks, the `[hidden]` CSS guard |
+| `demo.test.mjs` | 3 | the demo page loads the real modules and round-trips |
 
 What is actually verified, not merely claimed:
 
@@ -274,10 +286,18 @@ What is actually verified, not merely claimed:
   jsdom with a stubbed `chrome` API, presses the hotkey, clicks keys and asserts: the page
   field receives only `v1|CHACHA20-POLY1305|…`, the buffer is wiped after sealing, an envelope
   pasted into the buffer decrypts, a tampered one fails, password fields stay empty, the
-  shadow root is closed, settings propagate live, and no network API is ever called.
+  shadow root is closed, settings propagate live, keystrokes typed into the overlay never
+  reach page listeners, and no network API is ever called.
+- **The build itself** — the bundle is compared byte-for-byte with a fresh build, a tampered
+  copy is proven to fail `--check`, a broken manifest is proven to be rejected, and the store
+  zip is asserted to contain the runtime files and none of the development ones.
 - **Packaging** — manifest version matches `package.json`, every referenced file exists, icons
   are real PNGs of the declared size, no remote assets, no `eval`, and every settings control
   the popup touches exists in its markup.
+
+The fuzzing and concurrency tests use fixed seeds, so a failure reproduces from its iteration
+number. No test needs a browser: the DOM suites run on jsdom, and every suite skips (rather
+than fails) when jsdom is not installed.
 
 ## Try it without installing
 

@@ -156,8 +156,13 @@ export function kbCreateSettingsStore(area, options = {}) {
   let cache = { ...KB_DEFAULT_SETTINGS };
   let loaded = false;
   const listeners = new Set();
+  // Bumped by every mutation so an in-flight load() cannot clobber a change
+  // that arrived while it was waiting (e.g. the popup saving settings in
+  // another tab while this page is still booting).
+  let revision = 0;
 
   async function load() {
+    const startedAt = revision;
     let raw = null;
     try {
       const got = await storage.get(key);
@@ -165,6 +170,7 @@ export function kbCreateSettingsStore(area, options = {}) {
     } catch (e) {
       raw = null; // storage unavailable → defaults, never throw into the page
     }
+    if (revision !== startedAt) return { ...cache }; // newer state wins
     cache = kbNormalizeSettings(raw);
     loaded = true;
     return cache;
@@ -179,6 +185,7 @@ export function kbCreateSettingsStore(area, options = {}) {
     const next = kbNormalizeSettings({ ...cache, ...(patch || {}) });
     cache = next;
     loaded = true;
+    revision++;
     try {
       await storage.set({ [key]: next });
     } catch (e) {
@@ -209,6 +216,7 @@ export function kbCreateSettingsStore(area, options = {}) {
   }
 
   function applyExternal(raw) {
+    revision++;
     cache = kbNormalizeSettings(raw);
     emit(cache);
     return { ...cache };

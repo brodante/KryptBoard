@@ -12,7 +12,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { bundleSources, readBundleHash } from './bundler.mjs';
@@ -30,7 +30,11 @@ async function readJson(relative) {
   return JSON.parse(await fs.readFile(path.join(ROOT, relative), 'utf8'));
 }
 
-async function assertManifestPaths(manifest) {
+/**
+ * Verifies that every file the manifest points at actually exists. Exported so
+ * the test suite can exercise the check itself, not just its happy path.
+ */
+export async function assertManifestPaths(manifest, root = ROOT) {
   const problems = [];
   const mustExist = [
     manifest.action && manifest.action.default_popup,
@@ -42,7 +46,7 @@ async function assertManifestPaths(manifest) {
 
   for (const relative of mustExist) {
     try {
-      await fs.access(path.join(ROOT, relative));
+      await fs.access(path.join(root, relative));
     } catch (error) {
       problems.push(`manifest references a missing file: ${relative}`);
     }
@@ -52,13 +56,41 @@ async function assertManifestPaths(manifest) {
     for (const relative of entry.resources || []) {
       if (relative.includes('*')) continue;
       try {
-        await fs.access(path.join(ROOT, relative));
+        await fs.access(path.join(root, relative));
       } catch (error) {
         problems.push(`web_accessible_resources references a missing file: ${relative}`);
       }
     }
   }
   return problems;
+}
+
+/** Files that exist in the repo but must never be shipped to the store. */
+export const PACKAGE_EXCLUDES = [
+  'node_modules/*',
+  'tests/*',
+  'scripts/*',
+  'demo/*',
+  'index.html',
+  'package.json',
+  'package-lock.json',
+  '*.zip',
+  '*.md',
+  '.gitignore'
+];
+
+/** Writes kryptboard-<version>.zip into `outDir`. Returns null if zip is absent. */
+export async function packageZip(manifest, { root = ROOT, outDir = root } = {}) {
+  const name = `kryptboard-${manifest.version}.zip`;
+  const target = path.join(outDir, name);
+  try {
+    await execFileAsync('zip', ['-qr', target, '.', '-x', ...PACKAGE_EXCLUDES], { cwd: root });
+  } catch (error) {
+    console.warn(`! zip step skipped: ${error && error.message ? error.message : error}`);
+    return null;
+  }
+  const stats = await fs.stat(target);
+  return { name, path: target, size: stats.size };
 }
 
 async function main() {
@@ -81,7 +113,7 @@ async function main() {
     console.log(`  source-sha256: ${hash}`);
   }
 
-  const problems = await assertManifestPaths(manifest);
+  const problems = await assertManifestPaths(manifest, ROOT);
   if (problems.length) {
     console.error(`✗ manifest check failed:\n  - ${problems.join('\n  - ')}`);
     process.exitCode = 1;
@@ -90,20 +122,16 @@ async function main() {
   console.log('✓ manifest references resolve');
 
   if (makeZip) {
-    const name = `kryptboard-${manifest.version}.zip`;
-    // index.html is a preview convenience; it is not part of the extension.
-    const exclude = ['-x', 'node_modules/*', 'tests/*', 'scripts/*', 'demo/*', 'index.html', '*.zip', '*.md', '.gitignore'];
-    try {
-      await execFileAsync('zip', ['-qr', name, '.', '-x', ...exclude.slice(1)], { cwd: ROOT });
-      const stats = await fs.stat(path.join(ROOT, name));
-      console.log(`✓ packaged ${name} (${(stats.size / 1024).toFixed(1)} KiB)`);
-    } catch (error) {
-      console.warn(`! zip step skipped: ${error && error.message ? error.message : error}`);
-    }
+    const packaged = await packageZip(manifest, { root: ROOT });
+    if (packaged) console.log(`✓ packaged ${packaged.name} (${(packaged.size / 1024).toFixed(1)} KiB)`);
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+// Only run when invoked as a script — importing this module (for tests) must
+// not rebuild the extension as a side effect.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

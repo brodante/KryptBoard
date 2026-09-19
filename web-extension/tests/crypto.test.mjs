@@ -436,3 +436,169 @@ test('defaults are the documented ones', () => {
     envelopeBytes: `v1|${KB_ALGORITHM}|AAAAAAAAAAAAAAAA|AQAB|AAAAAAAAAAAAAAAAAAAAAA`.length
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* property / fuzz tests                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Deterministic PRNG so a failing case can be reproduced from its seed,
+ * and every reported iteration number maps to the same input forever.
+ */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const CODE_POINTS = [
+  ...Array.from({ length: 0x20 }, (_, i) => 0x20 + i), // printable ASCII
+  0x00e9, 0x00fc, 0x0141, 0x03b1, 0x0416, 0x05d0, 0x0627, 0x3042, 0x4e2d, 0xac00,
+  0x1f510, 0x1f6e1, 0x1f44b, 0x1f469, 0x200d, 0x0a, 0x09, 0x26a0
+];
+
+function randomString(rand, maxLength) {
+  const length = Math.floor(rand() * (maxLength + 1));
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    const cp = CODE_POINTS[Math.floor(rand() * CODE_POINTS.length)];
+    out += String.fromCodePoint(cp);
+  }
+  return out;
+}
+
+test('fuzz: 250 random round-trips, byte-for-byte identical', async () => {
+  const rand = mulberry32(0xc0ffee);
+  const aaDs = ['', '', 'room-42', 'channel:7', 'ünïcödé-aad'];
+
+  for (let i = 0; i < 250; i++) {
+    const plaintext = randomString(rand, 400);
+    const passphrase = randomString(rand, 24) || 'p'; // empty passphrases are refused by design
+    const aad = aaDs[Math.floor(rand() * aaDs.length)];
+    const hardened = rand() < 0.1;
+    const options = hardened ? { aad, hardened: true, iterations: 1000 } : { aad };
+
+    const envelope = await kbEncrypt(plaintext, passphrase, options);
+    const recovered = await kbDecrypt(envelope, passphrase, { aad });
+    assert.equal(recovered, plaintext, `iteration ${i} did not round-trip`);
+  }
+});
+
+test('fuzz: every single-bit corruption is detected, never silently accepted', async () => {
+  const rand = mulberry32(0x5eed);
+  const passphrase = 'fuzz-passphrase';
+  let checks = 0;
+
+  for (let i = 0; i < 120; i++) {
+    const plaintext = randomString(rand, 80) || 'x';
+    const envelope = await kbEncrypt(plaintext, passphrase);
+    const parts = envelope.split('|');
+
+    // corrupt one byte of the nonce, the ciphertext or the tag
+    const field = 2 + Math.floor(rand() * 3);
+    const bytes = kbB64UrlDecode(parts[field]);
+    const index = Math.floor(rand() * bytes.length);
+    const bit = 1 << Math.floor(rand() * 8);
+    bytes[index] ^= bit;
+    parts[field] = kbB64UrlEncode(bytes);
+    const tampered = parts.join('|');
+
+    let outcome = 'accepted';
+    let recovered = null;
+    try {
+      recovered = await kbDecrypt(tampered, passphrase);
+    } catch (error) {
+      outcome = error.code || error.name;
+    }
+    assert.notEqual(outcome, 'accepted', `iteration ${i}: tampered envelope decrypted to ${JSON.stringify(recovered)}`);
+    assert.equal(outcome, 'AUTH_FAILED', `iteration ${i}: expected AUTH_FAILED, got ${outcome}`);
+    checks++;
+  }
+  assert.equal(checks, 120);
+});
+
+test('fuzz: structural damage is rejected as malformed, not as a crypto failure', async () => {
+  const rand = mulberry32(0xdead);
+  const passphrase = 'fuzz-passphrase';
+
+  for (let i = 0; i < 80; i++) {
+    const envelope = await kbEncrypt(randomString(rand, 40) || 'y', passphrase);
+    const parts = envelope.split('|');
+    const damage = Math.floor(rand() * 4);
+
+    let candidate = envelope;
+    if (damage === 0) candidate = parts.slice(0, 4).join('|'); // dropped field
+    if (damage === 1) candidate = `${envelope}|extra`;
+    if (damage === 2) candidate = envelope.replace('v1|', 'v2|'); // wrong version
+    if (damage === 3) parts[3] = parts[3].slice(0, -3); // truncated ciphertext
+    if (damage === 3) candidate = parts.join('|');
+
+    let code = null;
+    try {
+      await kbDecrypt(candidate, passphrase);
+    } catch (error) {
+      code = error.code;
+    }
+    assert.ok(
+      ['BAD_ENVELOPE', 'UNSUPPORTED_VERSION', 'AUTH_FAILED'].includes(code),
+      `iteration ${i}: damage ${damage} produced ${code}`
+    );
+    if (damage === 0 || damage === 1) assert.equal(code, 'BAD_ENVELOPE');
+    if (damage === 2) assert.equal(code, 'UNSUPPORTED_VERSION');
+  }
+});
+
+test('fuzz: a wrong passphrase never yields plaintext', async () => {
+  const rand = mulberry32(0x1234);
+  for (let i = 0; i < 40; i++) {
+    const plaintext = randomString(rand, 60) || 'z';
+    const right = `right-${i}`;
+    const wrong = `wrong-${i}-${Math.floor(rand() * 1e9)}`;
+    const envelope = await kbEncrypt(plaintext, right);
+    await assert.rejects(
+      () => kbDecrypt(envelope, wrong),
+      (error) => error.code === 'AUTH_FAILED',
+      `iteration ${i}`
+    );
+  }
+});
+
+test('ciphertext never contains the plaintext, and nonces never repeat', async () => {
+  const rand = mulberry32(0xbeef);
+  const seen = new Set();
+
+  for (let i = 0; i < 120; i++) {
+    // long, highly recognisable plaintexts make an accidental leak obvious
+    const plaintext = 'LEAK-CANARY-' + randomString(rand, 120).replace(/[^A-Za-z0-9]/g, '') + '-END';
+    const envelope = await kbEncrypt(plaintext, 'pw');
+    assert.equal(envelope.includes('LEAK-CANARY'), false, `iteration ${i} leaked plaintext into the envelope`);
+
+    const nonce = envelope.split('|')[2];
+    assert.equal(seen.has(nonce), false, `iteration ${i} reused a nonce`);
+    seen.add(nonce);
+  }
+  assert.equal(seen.size, 120);
+});
+
+test('re-formatting a parsed envelope reproduces it exactly (canonical form)', async () => {
+  const rand = mulberry32(0x9999);
+  for (let i = 0; i < 60; i++) {
+    const envelope = await kbEncrypt(randomString(rand, 100), 'pw', { aad: 'ctx' });
+    assert.equal(kbFormatEnvelope(kbParseEnvelope(envelope)), envelope, `iteration ${i}`);
+  }
+});
+
+test('64 KiB stays comfortably fast (no accidental quadratic behaviour)', async () => {
+  const plaintext = 'a'.repeat(64 * 1024);
+  const started = Date.now();
+  const envelope = await kbEncrypt(plaintext, 'pw');
+  const recovered = await kbDecrypt(envelope, 'pw');
+  const elapsed = Date.now() - started;
+  assert.equal(recovered.length, plaintext.length);
+  assert.ok(elapsed < 5000, `64 KiB round-trip took ${elapsed} ms`);
+});

@@ -135,15 +135,29 @@ export function kbDescribeTarget(el) {
 }
 
 function kbSetNativeValue(el, value) {
-  const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-  if (descriptor && descriptor.set) descriptor.set.call(el, value);
-  else el.value = value;
+  // Walk the element's own prototype chain for the native value setter rather
+  // than reaching for the script realm's globals: an element can belong to an
+  // iframe (or any other realm) that owns different constructors. This also
+  // bypasses framework value-tracker shims installed on the instance, which is
+  // the entire point of the native-setter path.
+  let proto = Object.getPrototypeOf(el);
+  while (proto) {
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(el, value);
+      return;
+    }
+    proto = Object.getPrototypeOf(proto);
+  }
+  el.value = value;
 }
 
 function kbCreateInputEvent(doc, type, data, inputType) {
+  const view = (doc && doc.defaultView) || null;
+  const InputEventCtor = (view && view.InputEvent) || (typeof InputEvent !== 'undefined' ? InputEvent : null);
   try {
-    return new InputEvent(type, { bubbles: true, cancelable: type === 'beforeinput', composed: true, data, inputType });
+    if (!InputEventCtor) throw new Error('no InputEvent constructor');
+    return new InputEventCtor(type, { bubbles: true, cancelable: type === 'beforeinput', composed: true, data, inputType });
   } catch (e) {
     const event = doc.createEvent('Event');
     event.initEvent(type, true, true);
@@ -196,14 +210,18 @@ export function kbInsertText(el, text, options = {}) {
     end = value.length;
   }
   let next = value.slice(0, start) + text + value.slice(end);
+  let inserted = text;
   const maxLength = typeof el.maxLength === 'number' ? el.maxLength : -1;
   if (maxLength >= 0 && next.length > maxLength) {
-    // honour the field's own maxlength instead of silently bypassing it
-    next = value.slice(0, start) + text.slice(0, Math.max(0, maxLength - (value.length - (end - start))));
-    next = next.slice(0, maxLength);
+    // Honour the field's own maxlength instead of bypassing it, but keep the
+    // text that already sits after the caret — dropping it would silently
+    // destroy the user's existing input.
+    const room = Math.max(0, maxLength - (value.length - (end - start)));
+    inserted = text.slice(0, room);
+    next = (value.slice(0, start) + inserted + value.slice(end)).slice(0, maxLength);
   }
   kbSetNativeValue(el, next);
-  const caret = Math.min(next.length, start + text.length);
+  const caret = Math.min(next.length, start + inserted.length);
   try {
     el.setSelectionRange(caret, caret);
   } catch (e) {
@@ -256,9 +274,15 @@ export function kbCommitEnter(el, commitText) {
   const multiline = el.tagName === 'TEXTAREA' || kbIsContentEditable(el);
   if (multiline) return commitText('\n');
   const doc = el.ownerDocument || document;
-  const event = new KeyboardEvent('keydown', {
-    key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true
-  });
+  // Build the event with the target's own realm so it is a real KeyboardEvent
+  // of that document, not of whichever realm this script runs in.
+  const view = doc.defaultView || null;
+  const KeyboardEventCtor = (view && view.KeyboardEvent) || (typeof KeyboardEvent !== 'undefined' ? KeyboardEvent : null);
+  const event = KeyboardEventCtor
+    ? new KeyboardEventCtor('keydown', {
+        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true
+      })
+    : new Event('keydown', { bubbles: true, cancelable: true });
   const notCancelled = el.dispatchEvent(event);
   if (notCancelled && el.form && typeof el.form.requestSubmit === 'function') {
     try {
@@ -290,9 +314,12 @@ export function kbCommitToTarget(el, text, style = 'auto') {
 }
 
 function kbCommitViaExecCommand(el, text) {
+  // Use the element's own document: with all_frames the script runs once per
+  // frame, but a same-origin iframe target can still belong to another one.
+  const targetDocument = (el && el.ownerDocument) || document;
   try {
-    if (typeof document.execCommand !== 'function') return { ok: false, reason: 'unsupported' };
-    if (!document.execCommand('insertText', false, text)) return { ok: false, reason: 'refused' };
+    if (typeof targetDocument.execCommand !== 'function') return { ok: false, reason: 'unsupported' };
+    if (!targetDocument.execCommand('insertText', false, text)) return { ok: false, reason: 'refused' };
     return { ok: true, via: 'execCommand' };
   } catch (e) {
     return { ok: false, reason: 'threw' };
@@ -840,10 +867,18 @@ export function kbCreateKeyboard(options = {}) {
     }
   }
 
+  // The clipboard lives on the window that owns the document, not necessarily
+  // on this script's realm (iframes and test harnesses differ).
+  function clipboardApi() {
+    const view = doc && doc.defaultView;
+    return (view && view.navigator && view.navigator.clipboard) || (typeof navigator !== 'undefined' ? navigator.clipboard : null);
+  }
+
   async function copyToClipboard(text) {
+    const clipboard = clipboardApi();
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
+      if (clipboard && clipboard.writeText) {
+        await clipboard.writeText(text);
         return true;
       }
     } catch (e) {
@@ -885,8 +920,9 @@ export function kbCreateKeyboard(options = {}) {
 
   async function handlePaste() {
     let text = '';
+    const clipboard = clipboardApi();
     try {
-      if (navigator.clipboard && navigator.clipboard.readText) text = await navigator.clipboard.readText();
+      if (clipboard && clipboard.readText) text = await clipboard.readText();
     } catch (e) {
       text = '';
     }
@@ -1032,12 +1068,28 @@ export function kbCreateKeyboard(options = {}) {
   }
 
   /** Keeps page-level handlers from reacting to keystrokes made in the overlay. */
+  /**
+   * Everything typed into the overlay stays in the overlay. The buffer holds
+   * plaintext, so its key/input/composition events must not reach the page's
+   * listeners — they bubble out of the shadow root and would otherwise be
+   * observable (retargeted to the host, but with `event.data` intact).
+   */
   function onHostKeyEvent(event) {
     if (event.type === 'keydown' && event.key === 'Escape' && settings().hideOnEscape !== false) {
       close('esc');
     }
     event.stopPropagation();
   }
+
+  // Attached in the *bubble* phase on purpose: a capture-phase listener here
+  // would stopPropagation() before the buffer's own keydown handler ran, which
+  // silently killed the Ctrl+Enter seal shortcut.
+  const PRIVATE_EVENTS = [
+    'keydown', 'keyup', 'keypress',
+    'beforeinput', 'input',
+    'compositionstart', 'compositionupdate', 'compositionend',
+    'paste'
+  ];
 
   function onHostMouseDown(event) {
     // Keep focus where it belongs: on the field (plain) or on the buffer (encrypted).
@@ -1060,9 +1112,7 @@ export function kbCreateKeyboard(options = {}) {
 
   root.addEventListener('mousedown', onHostMouseDown);
   root.addEventListener('click', onClick);
-  root.addEventListener('keydown', onHostKeyEvent, true);
-  root.addEventListener('keyup', onHostKeyEvent, true);
-  root.addEventListener('keypress', onHostKeyEvent, true);
+  for (const type of PRIVATE_EVENTS) root.addEventListener(type, onHostKeyEvent, false);
   refs.buffer.addEventListener('input', onBufferInput);
   refs.buffer.addEventListener('keydown', onBufferKeydown);
   refs.pass.addEventListener('input', onPassInput);

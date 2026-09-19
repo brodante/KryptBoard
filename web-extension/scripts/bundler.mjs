@@ -15,6 +15,16 @@ import crypto from 'node:crypto';
 const IMPORT_RE = /^[ \t]*import\s*\{([\s\S]*?)\}\s*from\s*['"]([^'"]+)['"];?[ \t]*$/gm;
 const EXPORT_DECL_RE = /^export[ \t]+(?:(async)[ \t]+)?(function|class|const|let|var)[ \t]+([A-Za-z0-9_$]+)/gm;
 
+// `import`/`export` that survived the rewrite: statements (any position), the
+// dynamic form, and namespace/default imports. `obj.import` must not match.
+const RESIDUAL_IMPORT_RE = /(?:^|[^\w.$])import\s*[({*'"]|(?:^|[^\w.$])import\s+[\w$*{]/m;
+const RESIDUAL_EXPORT_RE = /(?:^|[^\w.$])export\s+[\w$*{]/m;
+
+/** Removes comments so prose (which may legitimately say "import") is ignored. */
+function stripComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+}
+
 export async function bundleSources({ root, entry }) {
   const modules = new Map(); // canonical id -> { id, code, deps: Set<string> }
   const order = [];
@@ -49,7 +59,17 @@ export async function bundleSources({ root, entry }) {
       return `${isAsync ? 'async ' : ''}${kind} ${name}`;
     });
 
-    if (/^\s*export\b/m.test(code)) {
+    // Anything the rewrite above did not consume — default imports, namespace
+    // imports, dynamic import(), export lists, export * — would survive into
+    // the output as real module syntax, which is a syntax error in the classic
+    // script a content script has to be. Refuse instead of shipping it.
+    // Comments are stripped first so prose cannot trip these checks, and the
+    // lookbehind-ish prefix avoids matching properties such as `obj.import`.
+    const residue = stripComments(code);
+    if (RESIDUAL_IMPORT_RE.test(residue)) {
+      throw new Error(`Bundler: unhandled import syntax in ${id} (only named imports from relative paths are supported).`);
+    }
+    if (RESIDUAL_EXPORT_RE.test(residue)) {
       throw new Error(`Bundler: unhandled export syntax in ${id}.`);
     }
 

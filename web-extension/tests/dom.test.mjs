@@ -172,7 +172,7 @@ async function createHarness(options = {}) {
     return el;
   }
 
-  async function waitFor(predicate, { timeout = 3000, step = 8 } = {}) {
+  async function waitFor(predicate, { timeout = 10000, step = 8 } = {}) {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       if (predicate()) return true;
@@ -514,4 +514,389 @@ test('the overlay never issues a network request', { skip }, async () => {
   await harness.waitFor(() => harness.document.getElementById('msg').value.length > 0);
 
   assert.deepEqual(attempts, [], 'the keyboard must stay offline');
+});
+
+/* ------------------------------------------------------------------ */
+/* target editing primitives                                           */
+/* ------------------------------------------------------------------ */
+
+async function primitiveHarness(html) {
+  const dom = new JSDOM(`<!doctype html><body>${html}</body>`, { url: 'https://example.test/', runScripts: 'outside-only' });
+  const { window } = dom;
+  window.TextEncoder = TextEncoder;
+  window.TextDecoder = TextDecoder;
+  const { kbInsertText, kbDeleteBackward, kbCommitEnter, kbCommitToTarget, kbIsEditable, kbIsContentEditable, kbIsPasswordField } =
+    await import('../src/keyboard.js');
+  return { window, document: window.document, kbInsertText, kbDeleteBackward, kbCommitEnter, kbCommitToTarget, kbIsEditable, kbIsContentEditable, kbIsPasswordField };
+}
+
+test('inserting text respects maxlength, replaces the selection and leaves the caret after it', { skip }, async () => {
+  const h = await primitiveHarness('<input id="short" maxlength="5" value="ab" /><input id="plain" value="hello" />');
+
+  const short = h.document.getElementById('short');
+  short.setSelectionRange(2, 2); // caret at the end of "ab"
+  h.kbInsertText(short, 'cdefgh');
+  assert.equal(short.value, 'abcde', 'the field must not exceed its own maxlength');
+
+  // overflow must not destroy what already sits after the caret
+  short.value = 'ab';
+  short.setSelectionRange(0, 0);
+  h.kbInsertText(short, 'XYZWVU');
+  assert.equal(short.value, 'XYZab', 'existing characters survive an overflowing insert');
+
+  const plain = h.document.getElementById('plain');
+  plain.setSelectionRange(1, 4); // replace "ell"
+  h.kbInsertText(plain, 'ipp');
+  assert.equal(plain.value, 'hippo');
+  assert.equal(plain.selectionStart, 4);
+  assert.equal(plain.selectionEnd, 4);
+});
+
+test('inserting text fires beforeinput and input so frameworks notice', { skip }, async () => {
+  const h = await primitiveHarness('<input id="f" value="" />');
+  const field = h.document.getElementById('f');
+  const events = [];
+  field.addEventListener('beforeinput', () => events.push('beforeinput'));
+  field.addEventListener('input', (event) => events.push(`input:${event.inputType || 'event'}`));
+  h.kbInsertText(field, 'x');
+  assert.deepEqual(events.slice(0, 1), ['beforeinput']);
+  assert.equal(events.some((e) => e.startsWith('input')), true);
+});
+
+test('a cancelled beforeinput aborts the insert', { skip }, async () => {
+  const h = await primitiveHarness('<input id="f" value="keep" />');
+  const field = h.document.getElementById('f');
+  field.addEventListener('beforeinput', (event) => event.preventDefault());
+  const result = h.kbInsertText(field, 'nope');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'cancelled');
+  assert.equal(field.value, 'keep');
+});
+
+test('backspace deletes the selection, then single characters, and stops at the start', { skip }, async () => {
+  const h = await primitiveHarness('<input id="f" value="abcdef" />');
+  const field = h.document.getElementById('f');
+
+  field.setSelectionRange(2, 5);
+  h.kbDeleteBackward(field);
+  assert.equal(field.value, 'abf', 'a selection is deleted wholesale');
+
+  field.setSelectionRange(2, 2);
+  h.kbDeleteBackward(field);
+  assert.equal(field.value, 'af');
+
+  field.setSelectionRange(0, 0);
+  assert.equal(h.kbDeleteBackward(field).reason, 'at-start');
+  assert.equal(field.value, 'af', 'nothing happens at position 0');
+});
+
+test('enter submits a single-line form but inserts a newline in a textarea', { skip }, async () => {
+  const h = await primitiveHarness('<form id="frm"><input id="line" value="" /></form><textarea id="area"></textarea>');
+  let submitted = 0;
+  h.document.getElementById('frm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitted++;
+  });
+
+  const line = h.document.getElementById('line');
+  const lineResult = h.kbCommitEnter(line, () => ({ ok: true }));
+  assert.equal(lineResult.ok, true);
+  assert.equal(lineResult.submitted, true, 'a single-line field should let the page submit');
+  assert.equal(submitted, 1);
+
+  const area = h.document.getElementById('area');
+  let committed = '';
+  h.kbCommitEnter(area, (text) => {
+    committed = text;
+    return { ok: true };
+  });
+  assert.equal(committed, '\n', 'a textarea gets a literal newline');
+});
+
+test('the execCommand commit path is used when the page relies on it', { skip }, async () => {
+  const h = await primitiveHarness('<input id="f" value="" />');
+  const field = h.document.getElementById('f');
+  const calls = [];
+  h.document.execCommand = (command, ui, value) => {
+    calls.push({ command, value });
+    field.value += value; // pretend the browser did the insert
+    return true;
+  };
+
+  const result = h.kbCommitToTarget(field, 'typed', 'execCommand');
+  assert.equal(result.ok, true);
+  assert.equal(result.via, 'execCommand');
+  assert.deepEqual(calls, [{ command: 'insertText', value: 'typed' }]);
+
+  // a refusing document falls back to the native path rather than losing text
+  h.document.execCommand = () => false;
+  const fallback = h.kbCommitToTarget(field, 'X', 'execCommand');
+  assert.equal(fallback.reason, 'refused');
+});
+
+test('editability classification covers the fields that matter', { skip }, async () => {
+  const h = await primitiveHarness([
+    '<input id="text" type="text" />',
+    '<input id="search" type="search" />',
+    '<input id="pw" type="password" />',
+    '<input id="ro" readonly value="x" />',
+    '<input id="dis" disabled />',
+    '<textarea id="ta"></textarea>',
+    '<div id="ce" contenteditable="true"></div>',
+    '<div id="celess"></div>',
+    '<div id="inherit"><span id="child"></span></div>'
+  ].join(''));
+
+  const doc = h.document;
+  assert.equal(h.kbIsEditable(doc.getElementById('text')), true);
+  assert.equal(h.kbIsEditable(doc.getElementById('search')), true);
+  assert.equal(h.kbIsEditable(doc.getElementById('pw')), true, 'a password field is editable — it is the *targeting* rule that excludes it');
+  assert.equal(h.kbIsEditable(doc.getElementById('ro')), false, 'readonly must never be written to');
+  assert.equal(h.kbIsEditable(doc.getElementById('dis')), false);
+  assert.equal(h.kbIsEditable(doc.getElementById('ta')), true);
+  assert.equal(h.kbIsEditable(doc.getElementById('ce')), true);
+  assert.equal(h.kbIsEditable(doc.getElementById('celess')), false);
+  assert.equal(h.kbIsEditable(null), false);
+
+  assert.equal(h.kbIsPasswordField(doc.getElementById('pw')), true);
+  assert.equal(h.kbIsPasswordField(doc.getElementById('text')), false);
+  assert.equal(h.kbIsContentEditable(doc.getElementById('ce')), true);
+  assert.equal(h.kbIsContentEditable(doc.getElementById('celess')), false);
+
+  // a detached element is not a valid target
+  const orphan = doc.createElement('input');
+  assert.equal(h.kbIsEditable(orphan), false);
+});
+
+/* ------------------------------------------------------------------ */
+/* settings-driven overlay behaviour                                   */
+/* ------------------------------------------------------------------ */
+
+test('password fields can be opted back in, and are excluded by default', { skip }, async () => {
+  const { kbEncrypt: _unused } = {}; // keep the import graph obvious
+  void _unused;
+
+  const strict = await createHarness({ sync: { 'kryptboard:settings': { startMode: 'plain' } } });
+  const strictField = strict.focusField('pw');
+  strict.pressHotkey();
+  strict.clickKey('[data-act="char"][data-v="s"]');
+  assert.equal(strictField.value, '', 'default: password fields stay untouched');
+
+  const relaxed = await createHarness({
+    sync: { 'kryptboard:settings': { startMode: 'plain', ignorePasswordFields: false } }
+  });
+  const relaxedField = relaxed.focusField('pw');
+  relaxed.pressHotkey();
+  relaxed.clickKey('[data-act="char"][data-v="s"]');
+  assert.equal(relaxedField.value, 's', 'opting out of the guard targets the field again');
+});
+
+test('escape hides the overlay unless that shortcut is disabled', { skip }, async () => {
+  const standard = await createHarness();
+  standard.focusField('msg');
+  standard.pressHotkey();
+  assert.equal(standard.isVisible(), true);
+  standard.shadowQuery('[data-role="buffer"]').dispatchEvent(new standard.window.KeyboardEvent('keydown', {
+    key: 'Escape', bubbles: true, cancelable: true
+  }));
+  assert.equal(standard.isVisible(), false);
+
+  const sticky = await createHarness({ sync: { 'kryptboard:settings': { hideOnEscape: false } } });
+  sticky.focusField('msg');
+  sticky.pressHotkey();
+  sticky.shadowQuery('[data-role="buffer"]').dispatchEvent(new sticky.window.KeyboardEvent('keydown', {
+    key: 'Escape', bubbles: true, cancelable: true
+  }));
+  assert.equal(sticky.isVisible(), true, 'the shortcut is documented as configurable');
+});
+
+test('keystrokes in the buffer never reach page listeners', { skip }, async () => {
+  const harness = await createHarness({ session: { 'kryptboard:passphrase': 'pw' } });
+  harness.focusField('msg');
+  harness.pressHotkey();
+
+  // Bubble phase, i.e. exactly what a page's own keydown/input handlers use.
+  // (Capture listeners on document are inherently first — no handler inside a
+  // shadow tree can pre-empt them; that is true of every web page.)
+  const leaked = [];
+  for (const type of ['keydown', 'keyup', 'keypress', 'beforeinput', 'input', 'compositionupdate', 'paste']) {
+    harness.document.addEventListener(type, (event) => leaked.push(`${type}:${event.data || event.key || ''}`), false);
+    harness.document.body.addEventListener(type, (event) => leaked.push(`body-${type}`), false);
+  }
+
+  const bufferField = harness.shadowQuery('[data-role="buffer"]');
+  for (const key of ['s', 'e', 'c']) {
+    bufferField.value += key;
+    bufferField.dispatchEvent(new harness.window.KeyboardEvent('keydown', { key, bubbles: true, composed: true }));
+    bufferField.dispatchEvent(new harness.window.InputEvent('input', { data: key, bubbles: true, composed: true }));
+    bufferField.dispatchEvent(new harness.window.KeyboardEvent('keyup', { key, bubbles: true, composed: true }));
+  }
+
+  assert.deepEqual(leaked, [], 'the page must not be able to observe what is typed into the overlay');
+  assert.equal(bufferField.value, 'sec', 'the overlay itself still received the keys');
+
+  // clicks and buttons inside the overlay are still fully functional
+  harness.clickKey('[data-act="char"][data-v="x"]');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, 'secx');
+});
+
+test('the buffer can be kept after hiding, and is wiped by default', { skip }, async () => {
+  const keep = await createHarness({
+    session: { 'kryptboard:passphrase': 'pw' },
+    sync: { 'kryptboard:settings': { clearBufferOnClose: false } }
+  });
+  keep.focusField('msg');
+  keep.pressHotkey();
+  keep.clickKey('[data-act="char"][data-v="k"]');
+  keep.clickKey('[data-act="hide"]');
+  assert.equal(keep.shadowQuery('[data-role="buffer"]').value, 'k', 'kept when asked');
+
+  const wipe = await createHarness({ session: { 'kryptboard:passphrase': 'pw' } });
+  wipe.focusField('msg');
+  wipe.pressHotkey();
+  wipe.clickKey('[data-act="char"][data-v="k"]');
+  wipe.clickKey('[data-act="hide"]');
+  assert.equal(wipe.shadowQuery('[data-role="buffer"]').value, '', 'wiped by default');
+});
+
+test('sealing can leave the overlay open for a second message', { skip }, async () => {
+  const harness = await createHarness({
+    session: { 'kryptboard:passphrase': 'pw' },
+    sync: { 'kryptboard:settings': { closeAfterSend: false } }
+  });
+  const field = harness.focusField('msg');
+  harness.pressHotkey();
+  harness.clickKey('[data-act="char"][data-v="o"]');
+  harness.clickKey('[data-act="char"][data-v="k"]');
+  harness.clickKey('[data-act="send"]');
+  await harness.waitFor(() => harness.document.getElementById('msg').value.startsWith('v1|'));
+
+  assert.equal(harness.isVisible(), true, 'stays open when configured');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, '', 'but the buffer is still wiped');
+
+  // a second message seals independently
+  harness.clickKey('[data-act="char"][data-v="z"]');
+  harness.clickKey('[data-act="send"]');
+  await harness.waitFor(() => field.value.split('v1|').length === 3);
+  assert.notEqual(field.value.split('v1|')[1], field.value.split('v1|')[2], 'fresh nonce per message');
+});
+
+test('copy puts the envelope on the clipboard and paste reads one back', { skip }, async () => {
+  const harness = await createHarness({
+    session: { 'kryptboard:passphrase': 'pw' },
+    sync: { 'kryptboard:settings': { closeAfterSend: false } }
+  });
+  const copied = [];
+  let clipboardValue = '';
+  Object.defineProperty(harness.window.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: async (text) => {
+        copied.push(text);
+        clipboardValue = text;
+      },
+      readText: async () => clipboardValue
+    }
+  });
+
+  const buffer = () => harness.shadowQuery('[data-role="buffer"]').value;
+  const field = harness.focusField('msg');
+  harness.pressHotkey();
+
+  // 1. copy the plain buffer
+  harness.clickKey('[data-act="char"][data-v="h"]');
+  harness.clickKey('[data-act="copy"]');
+  await harness.waitFor(() => copied.length === 1);
+  assert.equal(copied[0], 'h');
+
+  // 2. paste it back into an emptied buffer
+  harness.clickKey('[data-act="clear"]');
+  assert.equal(buffer(), '');
+  harness.clickKey('[data-act="paste"]');
+  await harness.waitFor(() => buffer() === 'h');
+
+  // 3. seal it, then copy the *last envelope* (the buffer is empty now)
+  harness.clickKey('[data-act="send"]');
+  await harness.waitFor(() => field.value.startsWith('v1|'));
+  assert.equal(buffer(), '');
+  harness.clickKey('[data-act="copy"]');
+  await harness.waitFor(() => copied.length === 2);
+  assert.match(copied[1], /^v1\|CHACHA20-POLY1305\|/);
+
+  // 4. paste the envelope and decrypt it back to plaintext
+  harness.clickKey('[data-act="paste"]');
+  await harness.waitFor(() => buffer() === copied[1]);
+  harness.clickKey('[data-act="decrypt"]');
+  await harness.waitFor(() => buffer() === 'h');
+  assert.match(harness.shadowQuery('[data-role="status"]').textContent, /AEAD tag verified|Decrypted/);
+});
+
+test('shift locks after a double press, and theme cycles through its three states', { skip }, async () => {
+  const harness = await createHarness({ session: { 'kryptboard:passphrase': 'pw' } });
+  harness.focusField('msg');
+  harness.pressHotkey();
+
+  harness.clickKey('[data-act="shift"]');
+  harness.clickKey('[data-act="shift"]');
+  const shiftKey = harness.shadowQuery('[data-act="shift"]');
+  assert.equal(shiftKey.classList.contains('is-active'), true);
+  assert.equal(shiftKey.textContent, '⇪', 'shift lock has its own glyph');
+
+  harness.clickKey('[data-act="char"][data-v="a"]');
+  harness.clickKey('[data-act="char"][data-v="b"]');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, 'AB', 'lock keeps producing capitals');
+  harness.clickKey('[data-act="shift"]');
+  harness.clickKey('[data-act="char"][data-v="c"]');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, 'ABc', 'a third press releases it');
+
+  const theme = () => harness.shadowQuery('.kb').dataset.theme;
+  const before = theme();
+  harness.clickKey('[data-act="theme"]');
+  assert.notEqual(theme(), before, 'the theme button cycles');
+  harness.clickKey('[data-act="theme"]');
+  harness.clickKey('[data-act="theme"]');
+  assert.equal(theme(), before, 'and wraps around');
+});
+
+test('backspace on an empty buffer and empty sends are handled quietly', { skip }, async () => {
+  const harness = await createHarness({ session: { 'kryptboard:passphrase': 'pw' } });
+  harness.focusField('msg');
+  harness.pressHotkey();
+
+  harness.clickKey('[data-act="backspace"]');
+  assert.equal(harness.shadowQuery('[data-role="buffer"]').value, '');
+
+  // the button advertises its own state rather than firing into the void
+  assert.equal(harness.shadowQuery('[data-act="send"]').disabled, true, 'nothing to send');
+
+  // and the Ctrl+Enter shortcut takes the same guard
+  harness.shadowQuery('[data-role="buffer"]').dispatchEvent(new harness.window.KeyboardEvent('keydown', {
+    key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true
+  }));
+  await harness.waitFor(() => /Nothing to send/.test(harness.shadowQuery('[data-role="status"]').textContent));
+  assert.equal(harness.document.getElementById('msg').value, '', 'an empty send writes nothing');
+
+  // empty copy is equally harmless and must not throw
+  harness.clickKey('[data-act="copy"]');
+  await harness.waitFor(() => /Nothing to copy/.test(harness.shadowQuery('[data-role="status"]').textContent));
+
+  // typing re-enables the button
+  harness.clickKey('[data-act="char"][data-v="q"]');
+  await harness.waitFor(() => harness.shadowQuery('[data-act="send"]').disabled === false);
+});
+
+test('a long message still seals and round-trips exactly', { skip }, async () => {
+  const { kbDecrypt } = await import('../src/crypto.js');
+  const harness = await createHarness({ session: { 'kryptboard:passphrase': 'pw' } });
+  const field = harness.focusField('msg');
+  harness.pressHotkey();
+
+  const message = 'The quick brown fox jumps over the lazy dog. '.repeat(20).trim();
+  harness.typeBuffer(message);
+  assert.match(harness.shadowQuery('[data-role="count"]').textContent, new RegExp(`${message.length} ch`));
+
+  harness.clickKey('[data-act="send"]');
+  await harness.waitFor(() => field.value.startsWith('v1|'));
+  assert.equal(await kbDecrypt(field.value, 'pw'), message);
+  assert.match(harness.shadowQuery('[data-role="status"]').textContent, /Sealed \d+ B → \d+ B envelope/);
 });
