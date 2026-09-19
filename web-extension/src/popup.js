@@ -123,7 +123,8 @@ async function refresh() {
       [
         `Hotkey: ${state.hotkey}`,
         state.hasTarget ? `Target: <${state.target}>` : 'Target: none yet — click a text field',
-        state.hasPassphrase ? 'Passphrase: in memory' : 'Passphrase: not set'
+        state.hasPassphrase ? 'Passphrase: in memory' : 'Passphrase: not set',
+        state.capturingKeys ? '⌨ capturing your keyboard' : '⌨ capture off'
       ].join(' · ')
     );
     renderModeSwitch(state.mode || settings.startMode);

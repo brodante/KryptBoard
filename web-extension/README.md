@@ -352,38 +352,46 @@ byte-exact zeroization guarantee would need a WASM memory region, which is futur
 
 ## Performance
 
-Measured with `npm run bench` (Node 22, single core, this implementation, no hardware
-acceleration). The paper's Table 4 quotes ~450 MB/s for ChaCha20-Poly1305 and Figs. 4–5
-show negligible, linear overhead — those figures come from a native build; the extension
-ships a **portable pure-JS** implementation (no WASM, no dependencies, identical on every
-browser), so the honest numbers are these:
+Measured with `npm run bench` (`--json` for machines), node v22, single core, no hardware
+acceleration. The paper's Table 4 quotes ~450 MB/s and Figs. 4–5 show overhead that is
+negligible and grows linearly — those figures come from a native build. This extension ships
+a **portable pure-JS** AEAD (no WASM, no dependencies, byte-identical on every browser), so
+the honest numbers are these:
 
-| message | envelope | AEAD seal | AEAD open | AEAD MB/s | passphrase seal (incl. HKDF) |
+| payload | envelope | Algorithm-1 dict | AEAD seal | AEAD open | sealed MB/s |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 500 B | 728 B | 0.149 ms | 0.078 ms | 3.2 | 0.191 ms |
-| 1 KiB | 1 427 B | 0.137 ms | 0.120 ms | 7.1 | 0.177 ms |
-| 16 KiB | 21 907 B | 1.850 ms | 1.610 ms | 8.4 | 1.869 ms |
-| 64 KiB | 87 443 B | 8.100 ms | 6.423 ms | 7.7 | 8.200 ms |
-| 256 KiB | 349 587 B | 28.7 ms | 27.7 ms | 8.7 | 32.5 ms |
-| 1 MiB | 1 398 163 B | 193 ms | 127 ms | 5.2 | 222 ms |
+| 500 B | 739 chars | 745 chars | 0.28 ms | 0.17 ms | 1.7 |
+| 1 KiB | 1 438 chars | 1 445 chars | 0.23 ms | 0.14 ms | 4.2 |
+| 16 KiB | 21 918 chars | 21 925 chars | 1.78 ms | 1.76 ms | 8.8 |
+| 64 KiB | 87 454 chars | 87 461 chars | 7.39 ms | 6.70 ms | 8.5 |
+| 256 KiB | 349 598 chars | 349 605 chars | 33.6 ms | 28.0 ms | 7.5 |
+| 1 MiB | 1 398 174 chars | 1 398 181 chars | 208 ms | 113 ms | 4.8 |
 
-- **The usability claim holds**: a 500-character message adds ~0.15 ms of sealing on top of
-  a ~0.19 ms total, i.e. far below one frame. There is no per-keystroke derivation —
-  encryption happens once, when the user asks for it.
-- **Scaling is linear**: per-byte cost varies by 1.6× between 500 B and 1 MiB (constant
-  until cache pressure appears), not quadratically. `tests/bench.test.mjs` fails if that
-  ever changes class.
-- **Throughput is not the paper's 450 MB/s.** The bottleneck is the portable Poly1305
-  big-integer accumulator; 8 MB/s is ~40 000× faster than a person types, so it does not
-  matter for this workload. Two ways to close the gap if it ever does: a 32-bit-limb
-  Poly1305 (pure JS, ~10×), or `crypto.subtle` where the browser supports
-  `ChaCha20-Poly1305` (Firefox and Safari do; Chrome and Node's WebCrypto do not, which is
-  exactly why the portable path is the default).
+Key derivation, per message: **HKDF-SHA256 0.27 ms**; **PBKDF2-200 000 + HKDF 39 ms** (the
+optional work factor, by design). A 500-character message therefore costs **~0.3 ms** end to
+end in the passphrase model and **~0.07 ms** of pure AEAD in the paper's session-key model.
+
+- **"Negligible overhead" holds.** Even the hardened passphrase path finishes in well under
+  one frame, and nothing is derived per keystroke — encryption happens once, when the user
+  asks for it. A person types ~5 characters/second, so the cipher is never the bottleneck.
+- **Growth is linear, with a fixed setup cost.** Per-byte cost is highest for the smallest
+  message (fixed key setup) and flattens from 16 KiB on; the 1 MiB row drops again because
+  building a 1.4 MB base64 string — not the cipher — dominates at that size.
+  `tests/bench.test.mjs` fails if the cost class ever changes.
+- **Wire expansion is 1.48×** (base64 plus the 12-byte nonce and 16-byte tag), matching what
+  the paper's figures imply; the Algorithm-1 dictionary is 6 characters larger for the same
+  key and plaintext (JSON field names instead of `|` separators, padded base64).
+- **Throughput is not the paper's 450 MB/s.** The portable Poly1305 accumulator is the
+  bottleneck. Two ways to close the gap, if a workload ever needs it: a 32-bit-limb Poly1305
+  (~10×, still pure JS), or `crypto.subtle` where the browser exposes ChaCha20-Poly1305
+  (Firefox and Safari do; Chromium and Node's WebCrypto do not — which is exactly why the
+  portable path is the default).
+- **Zeroization is free**: wiping a 1.5 KB buffer measures ~0.001 ms.
 
 ## Tests
 
 ```bash
-npm test                   # everything: 179 tests across eleven suites
+npm test                   # everything: 180 tests across eleven suites
 npm run test:crypto        # 44 tests: primitives, envelope + dictionary, interop vectors, fuzzing
 npm run test:dom           # 40 tests: the built bundle inside a simulated page
 npm run bench              # measured throughput / overhead / scaling
@@ -397,7 +405,7 @@ npm run build -- --check   # fail if bundle/content.js is stale
 | `settings.test.mjs` | 16 | frozen defaults, hostile input (prototype pollution, garbage types), hotkey parsing/matching, the store's load/save/reset/subscribe paths, the passphrase vault's memory-vs-remembered rules, and a change landing mid-load |
 | `wiring.test.mjs` | 15 | exact hotkey matching (near-miss combos, auto-repeat, disabled), target rules (readonly, `contenteditable`, buttons, selects), password exclusion and its opt-out, focus inside the overlay, the capture path (trusted events only, shortcuts/arrows/Tab left alone, settings push flips it live), teardown |
 | `content.test.mjs` | 13 | double injection, foreign/unknown messages, the popup message API (including the toolbar's mode switch), session-key hand-over and wiping, replies that wait for storage to load, and settings/passphrase pushes from other tabs |
-| `popup.test.mjs` | 15 | popup boot, the isolated composer (passphrase **and** session-key models, seal, verify, wrong passphrase, AAD, work factor), session-key generate/import/copy/forget, the toolbar Plain/Encrypt switch, the capture checkbox, the footer watermark and author links, settings persistence, tabs, blocked pages, clipboard fallback |
+| `popup.test.mjs` | 16 | popup boot, the isolated composer (passphrase **and** session-key models, seal, verify, wrong passphrase, AAD, work factor), session-key generate/import/copy/forget, the toolbar Plain/Encrypt switch, the capture checkbox and the live ⌨ capture indicator, the footer watermark and author links, settings persistence, tabs, blocked pages, clipboard fallback |
 | `bench.test.mjs` | 3 | performance guards: a 500-character seal stays far below a frame, per-byte cost stays linear from 1 KiB to 64 KiB |
 | `bundler.test.mjs` | 9 | dependency order, per-module scope, async/class/destructuring, diamond and cyclic imports, determinism, and refusal to emit unhandled module syntax |
 | `build.test.mjs` | 4 | the staleness gate, the manifest cross-check (including a deliberately broken manifest), and the exact file list inside the packaged zip |

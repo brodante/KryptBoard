@@ -401,3 +401,17 @@ test('the popup carries the footer watermark and the author links', { skip }, as
     assert.equal(link.getAttribute('target'), '_blank');
   }
 });
+
+test('the popup shows when the page is capturing the keyboard', { skip }, async () => {
+  const popup = await bootPopup({
+    tag: 'capture-state',
+    sendMessage: async (tabId, message) => (
+      message.type === 'kryptboard:ping'
+        ? { ok: true, open: true, mode: 'encrypted', hotkey: 'Ctrl+Shift+K', hasTarget: true, target: 'textarea', hasPassphrase: false, capturingKeys: true }
+        : { ok: true }
+    )
+  });
+  const $ = (id) => popup.document.getElementById(id);
+  await waitFor(() => /capturing your keyboard/.test($('page-hint').textContent));
+  assert.match($('page-hint').textContent, /⌨ capturing your keyboard/);
+});
