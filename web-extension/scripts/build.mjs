@@ -91,7 +91,8 @@ async function main() {
 
   if (makeZip) {
     const name = `kryptboard-${manifest.version}.zip`;
-    const exclude = ['-x', 'node_modules/*', 'tests/*', 'scripts/*', 'demo/*', '*.zip', '*.md', '.gitignore'];
+    // index.html is a preview convenience; it is not part of the extension.
+    const exclude = ['-x', 'node_modules/*', 'tests/*', 'scripts/*', 'demo/*', 'index.html', '*.zip', '*.md', '.gitignore'];
     try {
       await execFileAsync('zip', ['-qr', name, '.', '-x', ...exclude.slice(1)], { cwd: ROOT });
       const stats = await fs.stat(path.join(ROOT, name));
