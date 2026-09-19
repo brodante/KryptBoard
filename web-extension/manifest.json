@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "KryptBoard — Encrypted Keyboard",
+  "short_name": "KryptBoard",
+  "version": "1.0.0",
+  "description": "A keystroke-buffering keyboard overlay that seals text with ChaCha20-Poly1305 and commits a v1|alg|nonce|ct|tag envelope. No network access.",
+  "minimum_chrome_version": "102",
+  "permissions": ["storage"],
+  "host_permissions": [],
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "KryptBoard — encrypted keyboard",
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "32": "assets/icons/icon-32.png",
+      "48": "assets/icons/icon-48.png",
+      "128": "assets/icons/icon-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "js": ["bundle/content.js"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/keyboard.css"],
+      "matches": ["http://*/*", "https://*/*", "file:///*"]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KryptBoard</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="head">
+    <span class="brand"><span class="dot"></span>KryptBoard</span>
+    <span class="pill" title="The extension ships without network permissions.">0 network calls</span>
+  </header>
+
+  <p class="lede">
+    An encrypted keyboard overlay for any web page — the browser sibling of the
+    <em>Secure IME</em> Android keyboard. Committed ciphertext keeps the
+    <code>v1|alg|nonce|ct|tag</code> envelope format.
+  </p>
+
+  <section class="card">
+    <div class="row">
+      <span class="status" id="page-status">Checking this page…</span>
+    </div>
+    <div class="row buttons">
+      <button id="toggle" class="primary" type="button">Open keyboard</button>
+      <button id="clear-pass" type="button">Clear passphrase</button>
+    </div>
+    <div class="hint" id="page-hint"></div>
+  </section>
+
+  <section class="card">
+    <h2>Try the crypto</h2>
+    <div class="tabs" role="tablist">
+      <button class="tab is-active" data-tab="encrypt" role="tab" type="button">Encrypt</button>
+      <button class="tab" data-tab="decrypt" role="tab" type="button">Decrypt</button>
+    </div>
+
+    <div class="tabpanel" data-panel="encrypt">
+      <label>Plaintext
+        <textarea id="enc-plain" rows="3" placeholder="Type the message to seal…"></textarea>
+      </label>
+      <label>Passphrase
+        <input id="enc-pass" type="password" placeholder="shared secret" autocomplete="off" />
+      </label>
+      <button id="enc-run" class="primary" type="button">Seal it</button>
+      <label>Envelope
+        <textarea id="enc-out" rows="3" readonly placeholder="v1|CHACHA20-POLY1305|…"></textarea>
+      </label>
+      <div class="row buttons">
+        <button id="enc-copy" type="button">Copy envelope</button>
+      </div>
+      <div class="hint" id="enc-meta"></div>
+    </div>
+
+    <div class="tabpanel" data-panel="decrypt" hidden>
+      <label>Envelope
+        <textarea id="dec-env" rows="3" placeholder="v1|CHACHA20-POLY1305|…"></textarea>
+      </label>
+      <label>Passphrase
+        <input id="dec-pass" type="password" placeholder="shared secret" autocomplete="off" />
+      </label>
+      <button id="dec-run" class="primary" type="button">Open it</button>
+      <label>Plaintext
+        <textarea id="dec-out" rows="3" readonly placeholder="recovered message"></textarea>
+      </label>
+      <div class="hint" id="dec-meta"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Keyboard</h2>
+
+    <label class="field">Default mode
+      <select id="set-startMode">
+        <option value="encrypted">Encrypted (buffer, then seal)</option>
+        <option value="plain">Plain (commit directly)</option>
+      </select>
+    </label>
+
+    <label class="field">Theme
+      <select id="set-theme">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="auto">Follow system</option>
+      </select>
+    </label>
+
+    <label class="field">Hotkey
+      <select id="set-hotkey">
+        <option value="Ctrl+Shift+K">Ctrl+Shift+K</option>
+        <option value="Ctrl+Shift+Space">Ctrl+Shift+Space</option>
+        <option value="Alt+Shift+K">Alt+Shift+K</option>
+        <option value="Ctrl+Shift+E">Ctrl+Shift+E</option>
+      </select>
+    </label>
+
+    <label class="check"><input type="checkbox" id="set-enabled" /> Enable the hotkey</label>
+    <label class="check"><input type="checkbox" id="set-closeAfterSend" /> Hide the keyboard after sending</label>
+    <label class="check"><input type="checkbox" id="set-clearBufferOnClose" /> Wipe the buffer when hiding it</label>
+    <label class="check"><input type="checkbox" id="set-ignorePasswordFields" /> Never target password fields</label>
+    <label class="check"><input type="checkbox" id="set-autoDetectEnvelope" /> Detect envelopes and offer Decrypt</label>
+    <label class="check"><input type="checkbox" id="set-showHints" /> Show shortcut hints</label>
+  </section>
+
+  <section class="card">
+    <h2>Key derivation</h2>
+
+    <label class="check">
+      <input type="checkbox" id="set-hardenedKdf" />
+      Harden the passphrase (PBKDF2-HMAC-SHA256 before HKDF)
+    </label>
+
+    <label class="field">PBKDF2 iterations
+      <input id="set-pbkdf2Iterations" type="number" min="1000" max="5000000" step="1000" />
+    </label>
+
+    <label class="field">Context label (AAD)
+      <input id="set-aad" type="text" placeholder="optional — both sides must use it" autocomplete="off" />
+    </label>
+
+    <p class="note">
+      Default: <code>key = HKDF-SHA256(passphrase, salt = nonce, info = "KryptBoard v1|CHACHA20-POLY1305|aad=…")</code>.
+      The work factor that was used is recorded inside the envelope's <code>alg</code> field, so the receiver always
+      derives the same key. Nothing here touches the network.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>Compatibility</h2>
+    <label class="field">Plain-mode commit style
+      <select id="set-commitStyle">
+        <option value="auto">Auto (recommended)</option>
+        <option value="native">Native value + input event</option>
+        <option value="execCommand">document.execCommand('insertText')</option>
+      </select>
+    </label>
+    <p class="note">
+      Useful when auditing how a site reacts to synthetic input. <em>Auto</em> uses
+      <code>execCommand</code> when the field is focused (keeps the site's undo stack) and falls back to the
+      native value setter plus an <code>InputEvent</code> otherwise.
+    </p>
+    <p class="note">
+      Envelopes are interoperable with the Android <code>crypto-lib</code>: paste one here to recover the
+      plaintext, or take one to the phone.
+    </p>
+  </section>
+
+  <footer class="foot">
+    <button id="reset" type="button">Restore defaults</button>
+    <span id="version" class="muted"></span>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

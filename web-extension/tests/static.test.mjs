@@ -1,0 +1,170 @@
+/**
+ * Static guarantees.
+ *
+ * These tests read the shipped files the way a reviewer (or the paper's
+ * artefact evaluator) would, and fail if the extension ever grows a network
+ * call, a permission it does not need, an external dependency, a dangling DOM
+ * reference, or a mismatched version.
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const read = (relative) => fs.readFile(path.join(ROOT, relative), 'utf8');
+const exists = async (relative) => {
+  try {
+    await fs.access(path.join(ROOT, relative));
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+async function sourceFiles() {
+  const dir = path.join(ROOT, 'src');
+  const entries = await fs.readdir(dir);
+  return entries.filter((name) => name.endsWith('.js')).map((name) => `src/${name}`);
+}
+
+/* ------------------------------------------------------------------ */
+/* manifest                                                            */
+/* ------------------------------------------------------------------ */
+
+test('manifest asks for the storage permission and nothing else', async () => {
+  const manifest = JSON.parse(await read('manifest.json'));
+  assert.equal(manifest.manifest_version, 3);
+  assert.deepEqual(manifest.permissions, ['storage']);
+  assert.deepEqual(manifest.host_permissions, []);
+  assert.equal(manifest.externally_connectable, undefined);
+  assert.equal(manifest.optional_permissions, undefined);
+  assert.equal(manifest.devtools_page, undefined);
+  assert.match(manifest.content_security_policy.extension_pages, /script-src 'self'/);
+  assert.equal(manifest.background, undefined, 'no service worker: nothing needs to run outside a page');
+  assert.equal(manifest.web_accessible_resources.length, 1);
+  assert.deepEqual(manifest.web_accessible_resources[0].resources, ['src/keyboard.css']);
+});
+
+test('content script covers http(s) and file pages, in all frames', async () => {
+  const manifest = JSON.parse(await read('manifest.json'));
+  const [script] = manifest.content_scripts;
+  assert.deepEqual(script.matches, ['http://*/*', 'https://*/*', 'file:///*']);
+  assert.deepEqual(script.js, ['bundle/content.js']);
+  assert.equal(script.all_frames, true);
+  assert.equal(script.run_at, 'document_idle');
+});
+
+test('manifest version matches package.json and the icons exist at the claimed sizes', async () => {
+  const manifest = JSON.parse(await read('manifest.json'));
+  const pkg = JSON.parse(await read('package.json'));
+  assert.equal(manifest.version, pkg.version);
+  for (const size of [16, 32, 48, 128]) {
+    const file = `assets/icons/icon-${size}.png`;
+    assert.ok(await exists(file), `${file} is missing`);
+    const png = await fs.readFile(path.join(ROOT, file));
+    assert.equal(png.subarray(1, 4).toString('ascii'), 'PNG', `${file} is not a PNG`);
+    // IHDR width/height are big-endian uint32 at offsets 16 and 20
+    assert.equal(png.readUInt32BE(16), size, `${file} width`);
+    assert.equal(png.readUInt32BE(20), size, `${file} height`);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* no network, no eval, no third-party code                            */
+/* ------------------------------------------------------------------ */
+
+test('no source file can reach the network', async () => {
+  const banned = [
+    /\bfetch\s*\(/,
+    /XMLHttpRequest/,
+    /WebSocket/,
+    /EventSource/,
+    /sendBeacon/,
+    /importScripts/,
+    /\bnavigator\.connection\b/,
+    /https?:\/\/(?!example\.test)/
+  ];
+  for (const file of await sourceFiles()) {
+    const code = await read(file);
+    for (const pattern of banned) {
+      assert.equal(pattern.test(code), false, `${file} matches ${pattern} — the extension must stay offline`);
+    }
+  }
+});
+
+test('no eval, no new Function, no runtime code generation', async () => {
+  for (const file of [...(await sourceFiles()), 'scripts/bundler.mjs', 'scripts/build.mjs']) {
+    const code = await read(file);
+    assert.equal(/\beval\s*\(/.test(code), false, `${file} uses eval`);
+    assert.equal(/new\s+Function\s*\(/.test(code), false, `${file} uses new Function`);
+    assert.equal(/document\.write\s*\(/.test(code), false, `${file} uses document.write`);
+  }
+});
+
+test('the overlay has no external dependencies and no remote assets', async () => {
+  for (const file of ['src/keyboard.js', 'src/keyboard.css', 'src/popup.html']) {
+    const code = await read(file);
+    assert.equal(/https?:\/\//.test(code), false, `${file} references a remote URL`);
+    assert.equal(/@import|url\(\s*['"]?http/i.test(code), false, `${file} loads a remote asset`);
+  }
+  const pkg = JSON.parse(await read('package.json'));
+  assert.deepEqual(Object.keys(pkg.dependencies || {}), [], 'the extension must ship with zero runtime dependencies');
+});
+
+test('the plaintext buffer lives in a closed shadow root', async () => {
+  const code = await read('src/keyboard.js');
+  assert.match(code, /attachShadow\(\s*\{\s*mode:\s*'closed'\s*\}\s*\)/);
+  assert.equal(/mode:\s*'open'/.test(code), false);
+});
+
+/* ------------------------------------------------------------------ */
+/* markup ↔ script consistency                                         */
+/* ------------------------------------------------------------------ */
+
+test('every element id referenced by the popup script exists in its markup', async () => {
+  const html = await read('src/popup.html');
+  const js = await read('src/popup.js');
+  const declared = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
+  const referenced = [...js.matchAll(/\$\('([^']+)'\)/g)].map((m) => m[1]);
+  assert.ok(referenced.length > 10, 'expected the popup script to reference its controls');
+  const missing = referenced.filter((id) => !declared.has(id));
+  assert.deepEqual(missing, [], `popup.js references ids that do not exist: ${missing.join(', ')}`);
+});
+
+test('every element id referenced by the demo script exists in its markup', async () => {
+  const html = await read('demo/demo.html');
+  const js = await read('demo/demo.js');
+  const declared = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
+  const referenced = [...js.matchAll(/\$\('([^']+)'\)/g)].map((m) => m[1]);
+  const missing = referenced.filter((id) => !declared.has(id));
+  assert.deepEqual(missing, [], `demo.js references ids that do not exist: ${missing.join(', ')}`);
+});
+
+test('every local file referenced by the demo page exists', async () => {
+  const html = await read('demo/demo.html');
+  const refs = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((m) => m[1]).filter((r) => !/^https?:|^#|^data:/.test(r));
+  for (const ref of refs) {
+    const resolved = path.posix.normalize(path.posix.join('demo', ref));
+    assert.ok(await exists(resolved), `demo.html references missing file ${ref}`);
+  }
+});
+
+test('the demo page uses the real extension modules, not a copy', async () => {
+  const js = await read('demo/demo.js');
+  assert.match(js, /from '\.\.\/src\/wiring\.js'/);
+  assert.match(js, /from '\.\.\/src\/crypto\.js'/);
+  assert.match(js, /from '\.\.\/src\/settings\.js'/);
+  assert.ok(await exists('src/wiring.js'));
+});
+
+/* ------------------------------------------------------------------ */
+/* documentation promises                                              */
+/* ------------------------------------------------------------------ */
+
+test('the README documents the threat model and the honest limits', async () => {
+  const readme = await read('README.md');
+  for (const phrase of ['Threat model', 'Limitations', 'KryptBoard']) {
+    assert.match(readme, new RegExp(phrase, 'i'), `README should discuss ${phrase}`);
+  }
+});
